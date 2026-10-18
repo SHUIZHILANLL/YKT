@@ -1,0 +1,231 @@
+# 雨课堂 Web 协议研究
+
+对雨课堂（长江雨课堂）**公开 Web 前端**与后端之间协议的一次独立研究，附带一个用于验证结论的客户端。
+
+协议事实来自 PC 端 web bundle 的静态提取 + 端点实测，不依赖任何私有资料。
+
+**核心结论：雨课堂没有 `join` 接口。进班不是一次请求，而是「凭 session 直连课堂接口」。二维码里的 `sign` 只约束非名单人员（旁听生），对在册学生是冗余参数。**
+
+---
+
+## ⚠️ 使用前必读
+
+**这个仓库在研究协议，不是在帮你处理学业事务。**请先读 [SECURITY.md](SECURITY.md)，里面写了凭据怎么存的（明文，不假装加密）、有哪些风险、以及什么行为会被认定为伪造考勤。
+
+三句话概括：
+
+1. **只操作你自己的账号**，只进入你自己已选课的课堂。
+2. **默认请用观察模式**，它只检测开课并提示，不动手：
+   ```bash
+   python ykt.py watch --observe
+   ```
+   GUI 里取消勾选「检测到开课自动进班」效果相同。
+3. **「自动签到」是自动化考勤。** 人不在课堂却让它签到属于伪造出勤，违反课堂纪律。
+   这个项目把该开关默认关闭，且**不实现**「超时补答 / 改成绩」那类功能。
+
+本项目与北京慕华信息科技有限公司无任何隶属或授权关系。使用可能违反雨课堂用户协议，
+后果由使用者承担。代码按 MIT 协议「原样」提供，不附带任何担保。
+
+---
+
+## 致谢
+
+协议认知建立在以下公开资料之上，详见 [NOTICE.md](NOTICE.md)：
+
+- **[《工小湖：给雨课堂与学校教务做了个小程序》](https://blog.jiclub.site/2026/yuketang-deep-dive)** by Cталин — 提供了「`sign` 只约束旁听生」的关键判断
+- **[RainClassSDK](https://github.com/Auto-CQUPT-Plan/RainClassSDK)** by Auto-CQUPT-Plan — 接口清单与鉴权头约定
+- **[rainclassroom-scrapper](https://gitbucket.skyw.top/physicsdolphin/rainclassroom-scrapper)** by physicsdolphin — **WebSocket 扫码登录的具体实现**，没有这份参考本项目登录部分无从下手
+- **[Ajax 的雨课堂爬虫笔记](https://aajax.top/2025/01/10/YuketangScrapper/)** — 课程/课次接口与 `offset` 实为 PageSize 的坑
+
+需要说明：本项目与原博客的技术结论**有实质分歧**（登录是 WebSocket 而非长轮询、`get_user_course_list` 端点名不符等），差异逐条列在下方对照表里。
+
+---
+
+## 两种用法
+
+![客户端界面](preview.png)
+
+### 1. GUI 客户端（推荐）
+
+已打包好的单文件程序：`dist/YuketangClient.exe`，双击即用，不需要装 Python。
+
+从源码跑：
+
+```bash
+pip install -r requirements.txt
+python app_gui.py
+```
+
+界面结构：
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ 雨课堂客户端   [姓名·学校·学号]              [刷新]  [登录]    │
+├───────────────┬──────────────────────────────────────────────┤
+│ 我的课程       │  实时课堂 │ 课程课次 │ 运行日志              │
+│ [搜索…]        │  ┌──────────────────────────────────────┐    │
+│ ┌───────────┐ │  │ 课堂        lesson_id  状态   操作    │    │
+│ │高等数学    │ │  │ 高数A(下)   998877    进行中 [进班][签到]│  │
+│ │ 班级·教师  │ │  └──────────────────────────────────────┘    │
+│ │大学物理    │ │                                              │
+│ └───────────┘ │                                              │
+├───────────────┴──────────────────────────────────────────────┤
+│ ☑自动进班  ☐自动签到  签到码[__]  轮询[5s]  ● 监控中  [停止]  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+功能：
+
+- **扫码登录** — 内嵌二维码，登录态落盘，下次自动恢复
+- **课程列表** — 搜索过滤；双击课程看它的课次
+- **实时课堂** — 轮询开课状态，检测到自动进班，表格每行可手动进班/签到
+- **课程课次** — 列出该课所有课次（回放/课件），任意课次可单独进班
+- **运行日志** — 全量请求日志，出问题看这里
+
+### 2. 命令行
+
+```bash
+python ykt.py probe      # 免登录自证端点真实性
+python ykt.py login      # 微信扫码一次
+python ykt.py courses    # 列课程
+python ykt.py live       # 查正在上课的课堂
+python ykt.py live --raw # 同上，并打印服务端原始字段（字段名对不上时用这个）
+python ykt.py watch --observe   # 【推荐】只检测开课，不进班不签到
+python ykt.py watch      # 常驻轮询自动进班
+python ykt.py enter 998877
+python ykt.py checkin 998877 1234
+```
+
+## 打包
+
+```bash
+pip install pyinstaller
+python build.py            # 目录版，启动快
+python build.py --onefile  # 单文件版，分发方便
+```
+
+产物在 `dist/`。`build.py` 已经排除了 PySide6 的 WebEngine/QML/Multimedia 等无关模块，体积比默认小一半。
+
+## 实测端点矩阵
+
+| 端点 | 方法 | 免鉴权 | 说明 |
+|---|---|---|---|
+| `/v2/api/web/courses/list?identity=2` | GET | 否 | 课程列表，要 `sessionid` |
+| `/v2/api/web/classroom_archive` | GET | 否 | 归档课程 |
+| `/v2/api/web/logs/learn/{cid}?actype=-1&page=0&offset=500&sort=-1` | GET | 否 | 课次列表（`offset` 实际是 PageSize）|
+| `/v/course_meta/on_lesson_courses` | GET | **是** | 开课感知，未登录返回 `{"success":true,"data":{"on_lessons":[]}}` |
+| `/api/v3/classroom/on-lesson` | GET | 否 | 开课感知 v3 栈 |
+| `/api/v3/lesson-summary/student?lesson_id=X` | GET | 否 | **进班本体**：拿到即已进班 |
+| `/api/v3/lesson-summary/student/presentation?presentation_id=&lesson_id=` | GET | 否 | 课件 |
+| `/api/v3/lesson/notkn/checkin` | POST | 否 | 签到 `{source, inviteCode}` |
+| `/api/lesson/web_check_in` | POST | 否 | 旧签到，需 CSRF |
+| `/api/v3/user/basic-info` | GET | 否 | 判活 |
+
+## 登录协议（WebSocket，不是长轮询）
+
+默认后端是 **长江雨课堂 `changjiang.yuketang.cn`**（根路径 302 → `/web`）。`changjiang.ykt.io` 是同一后端的别名域名，可以在登录框的下拉里切换。
+
+```
+wss://changjiang.yuketang.cn/wsapp/
+  → send {"op":"requestlogin","role":"web","version":1.4,"type":"qrcode","from":"web"}
+  ← {"op":"requestlogin","loginid":"<uuid>","expire_seconds":60,
+     "ticket":"https://mp.weixin.qq.com/cgi-bin/showqrcode?ticket=...",
+     "qrcode":"http://weixin.qq.com/q/02I3...","isReply":true}
+  ← {... "subscribe_status":..., "UserID":..., "Auth":...}   # 扫码确认后
+GET  /v/course_meta/user_info          # 顺带下发 csrftoken
+POST /pc/web_login  {"UserID":..,"Auth":..}  → Set-Cookie: sessionid
+```
+
+三个容易踩的点：
+
+1. **`UserID`/`Auth` 在 `subscribe_status` 那条消息里**，不在第一帧。只存第一帧会导致"扫码成功但一直报登录失败"。
+2. **`qrcode` 字段是 `http://weixin.qq.com/q/...` 短链，不是 qrconnect URL**，直接把它编码成二维码即可。`ticket` 字段则是微信官方二维码图片地址。
+3. **二维码只有 `expire_seconds`（实测 60）秒有效期**，过期必须重新发 `requestlogin` 换新码。
+
+## 扫码不行时：粘 Cookie
+
+扫码链路受微信端状态影响，偶发失败很正常。兜底路径是直接粘浏览器里的 `sessionid`：
+
+1. 浏览器打开 `https://changjiang.yuketang.cn/web` 并登录
+2. F12 → Application → Cookies → 选中该域名 → 复制 `sessionid` 的值
+3. GUI 登录框点「扫码不行？粘贴 Cookie」；或命令行：
+
+```bash
+python ykt.py cookie <sessionid>
+```
+
+## 切换后端
+
+```bash
+python ykt.py host                 # 看当前 + 可选项
+python ykt.py host 雨课堂专业版      # 切换并记住
+python ykt.py login --host 长江雨课堂
+```
+
+可选：`长江雨课堂` / `长江雨课堂(ykt.io)` / `雨课堂专业版` / `雨课堂`。
+
+## 为什么"免扫码"成立
+
+投屏二维码的本质是**前端路由页**，不是 API：
+
+```
+https://changjiang.ykt.io/v2/web/join_lesson?lesson_id=123&sign=ab8f&ts=1729158000
+```
+
+打开后前端拿 `sign + ts` 去换旁听资格。`sign` 校验的对象是不在班级名单里的人。在册学生凭 `sessionid` 已具备该 `lesson_id` 的访问权，所以进班 = `GET /api/v3/lesson-summary/student?lesson_id=X`，返回 `success:true` 就已经进班了。
+
+验证方法：把二维码链接的 `sign`、`ts` 删掉只留 `lesson_id`，用在册账号请求上面那个接口，返回 200 即成立。
+
+## 三个边界
+
+1. **进班 ≠ 签到。** 老师开了签到码，`inviteCode` 还是必须的。GUI 的「自动签到」只在无码签到下有效。
+2. **`on_lessons` 字段名不固定。** `ykt.norm_lesson()` 兜了 `lesson_id/courseware_id/id`、`classroom_id/cid` 多套命名。`live` 输出空但网页确实在上课时，把 `raw` 打出来对字段。
+3. **别把轮询拉满。** `/api/v3/*` 走统一网关，高频会撞限流。默认 5s 足够。
+
+## 可行性评估
+
+分三档：**已实测** / **原理成立但未端到端验证** / **依赖平台不变**。
+
+| 环节 | 状态 | 依据 |
+|---|---|---|
+| 域名与 API 网关 | ✅ 已实测 | `/v2/api/*` 返 `401002 Cookie has no sessionid`，`/api/v3/*` 返 `50000 UNAUTHENTICATED`，都是真接口 |
+| 开课感知 `on_lesson_courses` | ✅ 已实测 | 免鉴权直接返 `{"success":true,"data":{"on_lessons":[]}}` |
+| 登录 WebSocket | ✅ 已实测 | ws 握手成功、二维码正常下发、`expire_seconds:60` 可见 |
+| **扫码到 sessionid 的完整闭环** | ⚠️ 未端到端 | 缺一个真实微信账号跑完；`UserID/Auth` 在 `subscribe_status` 帧里（已按此实现），若字段名不同，登录框底部 ws 日志会直接显示 |
+| **进班 `lesson-summary/student`** | ⚠️ 未端到端 | 接口真实存在（实测需登录），但"返回 success 即已进班"是基于协议的推断，没在真实课堂上验证过 |
+| 免扫码的**原理** | ✅ 成立 | `sign` 只约束名单外旁听生；在册学生凭 sessionid 已具备该 lesson 的访问权 |
+| `on_lessons` 字段名 | ⚠️ 未知 | `norm_lesson()` 兜了 4 套命名；仍对不上就用 GUI 悬停 tooltip 或 `live --raw` 看原始 JSON |
+| 签到 | ⚠️ 三种方式兜底 | 原生客户端只发 `{source, inviteCode}`；有签到码时 `inviteCode` 必须对 |
+| 长期可用性 | ⚠️ 依赖平台 | 平台改协议、加风控、小程序审核都会让某一环失效 |
+
+**一句话**：抓包层面的协议是对的，登录和进班这两步的真实闭环需要你用自己账号跑一次，跑不通时 GUI 里能直接看到卡在哪一帧。
+
+## 已知限制
+
+- **进班 ≠ 签到**：老师开了签到码，`inviteCode` 还是必须的。
+- **`on_lessons` 字段名不固定**：`live --raw` 或 GUI 悬停单元格可看原始 JSON。
+- **轮询别拉满**：`/api/v3/*` 走统一网关，默认 5s 足够。
+- **二维码 60s 过期**：登录框自动换码，正在扫的码可能失效。
+- **切换后端后需重新登录**：cookie 是绑域名的。
+
+## 文件
+
+| 文件 | 说明 |
+|---|---|
+| `dist/YuketangClient.exe` | **打包好的客户端**（54 MB，单文件免安装） |
+| `app_gui.py` | PySide6 图形界面 |
+| `ykt.py` | 协议后端 + CLI（GUI 直接 import 它） |
+| `build.py` | PyInstaller 打包脚本 |
+| `requirements.txt` | 依赖清单 |
+| `preview.png` / `preview_login.png` | 界面截图 |
+| `session.json` | 登录后生成，含 `sessionid`，**已 gitignore** |
+| `config.json` | 记住你选的后端域名 |
+
+## 与那篇文章的差异
+
+| 文章说法 | 实际 |
+|---|---|
+| `/custom/auth/v1/auth/status` 30 秒阻塞长轮询 | 该路径不存在（三个域全 404/兜底）。登录走 WebSocket |
+| `get_user_course_list` 查课表 | 真实接口是 `/v2/api/web/courses/list?identity=2` |
+| 过滤 `status == 1` 判断开课 | 真实接口是 `on_lesson_courses` 返回 `on_lessons` 数组 |
+| 扫码进班链接是临时签名链接 | 对，但签名只约束旁听生，不约束在册学生 |
