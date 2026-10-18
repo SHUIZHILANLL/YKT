@@ -3,4 +3,14 @@ config.json
 __pycache__/
 *.log
 build/
-dist/
+dist/*
+# 只把 Android 安装包留在仓库里，桌面 exe 太大不放（用 build.py 自行构建）
+!dist/YuketangStudy-*.apk
+
+# Android
+android/.gradle/
+android/local.properties
+android/app/build/
+android/build/
+android/.idea/
+*.iml

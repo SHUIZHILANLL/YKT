@@ -41,7 +41,7 @@
 
 ---
 
-## 两种用法
+## 三种用法
 
 ![客户端界面](preview.png)
 
@@ -96,7 +96,32 @@ python ykt.py enter 998877
 python ykt.py checkin 998877 1234
 ```
 
-## 打包
+### 3. Android APK
+
+`dist/YuketangStudy-0.1.0-debug.apk`（60 KB，debug 签名，直接安装）。
+
+**这不是桌面版打包过来的**——PySide6 没有 Android 目标，所以是独立重写的一份：
+纯 Java + 原生 Views + `HttpURLConnection`，零第三方依赖。详见 [android/README.md](android/README.md)。
+
+登录方式和桌面版不同：手机没法用微信扫自己屏幕上的码，所以改成
+**截图 → 微信「扫一扫」→ 相册 → 选截图 → 确认**，App 自动轮询拿到 `sessionid`。
+这条链路走的是微信开放平台的 HTTP 轮询，不是桌面版的 WebSocket。
+
+从源码构建：
+
+```bash
+cd android
+# 需要 JDK 17 + Android SDK (compileSdk 34)
+export JAVA_HOME=/path/to/jdk-17
+export ANDROID_HOME=/path/to/android-sdk
+./gradlew assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+> ⚠️ APK **能编译、包结构已校验（aapt2 + apksigner），但没有在真机或模拟器上跑过**。
+> UI 细节、微信扫码的实际识别、国产 ROM 上的后台存活，都需要你自己验证。
+
+## 打包（桌面端）
 
 ```bash
 pip install pyinstaller
@@ -197,6 +222,9 @@ https://changjiang.ykt.io/v2/web/join_lesson?lesson_id=123&sign=ab8f&ts=17291580
 | `on_lessons` 字段名 | ⚠️ 未知 | `norm_lesson()` 兜了 4 套命名；仍对不上就用 GUI 悬停 tooltip 或 `live --raw` 看原始 JSON |
 | 签到 | ⚠️ 三种方式兜底 | 原生客户端只发 `{source, inviteCode}`；有签到码时 `inviteCode` 必须对 |
 | 长期可用性 | ⚠️ 依赖平台 | 平台改协议、加风控、小程序审核都会让某一环失效 |
+| **Android 版编译** | ✅ 已实测 | `assembleDebug` 通过，aapt2 校验包名/权限/minSdk 正确，apksigner 验签通过 |
+| **Android 版运行时** | ❌ 未验证 | 无真机/模拟器，UI 与微信扫码识别均未跑过 |
+| **微信 qrconnect 登录链路** | ✅ 已实测 | 拿到 appId `wx4d919285d23d91b3`、uuid 提取成功、轮询返回 `wx_errcode=408` |
 
 **一句话**：抓包层面的协议是对的，登录和进班这两步的真实闭环需要你用自己账号跑一次，跑不通时 GUI 里能直接看到卡在哪一帧。
 
@@ -212,7 +240,9 @@ https://changjiang.ykt.io/v2/web/join_lesson?lesson_id=123&sign=ab8f&ts=17291580
 
 | 文件 | 说明 |
 |---|---|
-| `dist/YuketangClient.exe` | **打包好的客户端**（54 MB，单文件免安装） |
+| `dist/YuketangClient.exe` | **打包好的桌面客户端**（54 MB，单文件免安装） |
+| `dist/YuketangStudy-0.1.0-debug.apk` | **Android 版**（60 KB，debug 签名） |
+| `android/` | Android 工程源码（纯 Java，零依赖） |
 | `app_gui.py` | PySide6 图形界面 |
 | `ykt.py` | 协议后端 + CLI（GUI 直接 import 它） |
 | `build.py` | PyInstaller 打包脚本 |
