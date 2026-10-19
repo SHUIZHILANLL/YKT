@@ -25,3 +25,6 @@ android/.idea/
 *_files/
 *.htm
 *.html
+
+# 第三方 APK 及其解包产物（分析用，不入库）
+_analysis/

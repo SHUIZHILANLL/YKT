@@ -37,7 +37,21 @@
 - **[rainclassroom-scrapper](https://gitbucket.skyw.top/physicsdolphin/rainclassroom-scrapper)** by physicsdolphin — **WebSocket 扫码登录的具体实现**，没有这份参考本项目登录部分无从下手
 - **[Ajax 的雨课堂爬虫笔记](https://aajax.top/2025/01/10/YuketangScrapper/)** — 课程/课次接口与 `offset` 实为 PageSize 的坑
 
-需要说明：本项目与原博客的技术结论**有实质分歧**（登录是 WebSocket 而非长轮询、`get_user_course_list` 端点名不符等），差异逐条列在下方对照表里。
+需要说明：本项目与原博客的部分技术结论**看起来**有分歧，但其中一条已被证伪（是本文曾经的判断失误）：
+
+- 早期本文断言「登录是 WebSocket，博客说的长轮询不存在」。查证后发现：
+  **博客的长轮询是他自建网关 `hnit.jiclub.site` 的 `POST /api/ykt/auth/login-qr`**，
+  而 PC 网页端确实是 WebSocket。两者都对，是两个不同的客户端。
+  详见 [GONGXIAOHU-ANALYSIS.md](GONGXIAOHU-ANALYSIS.md)。
+- 其余差异（`get_user_course_list` 端点名、`status == 1` 判断）仍按对照表处理。
+
+### 关于「工小湖」这个 App 的一点提示
+
+本文对它做过一次静态分析，结论放在 [GONGXIAOHU-ANALYSIS.md](GONGXIAOHU-ANALYSIS.md)。
+一句话版本：它会把你雨课堂的**会话 cookie 发往作者自建服务器**，签到也由那台服务器代签。
+它能自动签到，成立前提是**老师没开大屏动态码**——开了之后它同样签不上。
+
+这不是漏洞指控，是数据流向的事实。用不用，你自己权衡。
 
 ---
 
@@ -314,6 +328,7 @@ r = { invite_code: code, source: 14 };             // 否则 → 旧接口
 | `build.py` | PyInstaller 打包脚本 |
 | `requirements.txt` | 依赖清单 |
 | `preview.png` / `preview_login.png` | 界面截图 |
+| `GONGXIAOHU-ANALYSIS.md` | 第三方 App「工小湖」的机制分析与隐私提示 |
 | `session.json` | 登录后生成，含 `sessionid`，**已 gitignore** |
 | `config.json` | 记住你选的后端域名 |
 
