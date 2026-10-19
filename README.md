@@ -251,6 +251,28 @@ if ((n = await get(e)).code === 0) {
 之前两版之所以"有课却刷不出来"，就是因为查错了接口和容器字段。现已修正，
 并把老端点降级为兜底。
 
+## 签到：必须带 5 位课堂暗号
+
+「无码签到」不存在。PC 端 `joinClass` 里的真实逻辑（bundle `@5201763`）：
+
+```js
+if (5 !== code.length) return 走 join_classroom;   // 不是 5 位 → 那是班级邀请码，不是签到
+if (/[0-9]/.test(code.charAt(0))) return checkin(14, code);   // 首位数字 → 新接口
+r = { invite_code: code, source: 14 };             // 否则 → 旧接口
+```
+
+| 条件 | 端点 | 请求体 |
+|---|---|---|
+| 码 5 位且首位是数字 | `POST /api/v3/lesson/notkn/checkin` | `{source:14, inviteCode:码}` |
+| 码 5 位且首位非数字 | `POST /api/lesson/web_check_in` | `{invite_code:码, source:14}` + `X-CSRFToken` |
+
+坑点：
+
+- **发空码会得到 `50400 BAD_REQUEST`**，服务端不解释原因，很容易误判成"接口挂了"
+- 旧接口是 Django，缺 `X-CSRFToken` 会报 `CSRF token missing or incorrect`，
+  这个错误同样没有业务码
+- 两个接口的业务错误码还是两套（新接口 50019/50070，旧接口 10041/10042）
+
 ## 可行性评估
 
 分三档：**已实测** / **原理成立但未端到端验证** / **依赖平台不变**。
