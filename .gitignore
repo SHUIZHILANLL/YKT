@@ -1,10 +1,16 @@
-﻿session.json
+# 凭据与本地状态
+session.json
 config.json
-__pycache__/
 *.log
+*.jsonl
+ykt/lab/
+
+# 构建产物
+__pycache__/
 *.spec
 build/
 dist/*
+# 只保留 Android 安装包，桌面 exe 太大不放（用 build.py 自行构建）
 !dist/YuketangStudy-*.apk
 
 # Android
@@ -14,3 +20,8 @@ android/app/build/
 android/build/
 android/.idea/
 *.iml
+
+# 保存的网页存档（含第三方文章与图片，不入库）
+*_files/
+*.htm
+*.html

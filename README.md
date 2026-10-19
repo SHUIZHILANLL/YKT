@@ -138,8 +138,9 @@ python build.py --onefile  # 单文件版，分发方便
 | `/v2/api/web/courses/list?identity=2` | GET | 否 | 课程列表，要 `sessionid` |
 | `/v2/api/web/classroom_archive` | GET | 否 | 归档课程 |
 | `/v2/api/web/logs/learn/{cid}?actype=-1&page=0&offset=500&sort=-1` | GET | 否 | 课次列表（`offset` 实际是 PageSize）|
-| `/v/course_meta/on_lesson_courses` | GET | **是** | 开课感知，未登录返回 `{"success":true,"data":{"on_lessons":[]}}` |
-| `/api/v3/classroom/on-lesson` | GET | 否 | 开课感知 v3 栈 |
+| `/api/v3/classroom/on-lesson-upcoming-exam` | GET | 否 | **正在上课的真实数据源**，读 `data.onLessonClassrooms` |
+| `/v/course_meta/on_lesson_courses` | GET | **是** | 兜底。无论登录与否都返回 `{"success":true,"data":{"on_lessons":[]}}`，实际是空的 |
+| `/api/v3/classroom/on-lesson` | GET | 否 | 兜底 |
 | `/api/v3/lesson-summary/student?lesson_id=X` | GET | 否 | **进班本体**：拿到即已进班 |
 | `/api/v3/lesson-summary/student/presentation?presentation_id=&lesson_id=` | GET | 否 | 课件 |
 | `/api/v3/lesson/notkn/checkin` | POST | 否 | 签到 `{source, inviteCode}` |
@@ -226,6 +227,29 @@ https://changjiang.ykt.io/v2/web/join_lesson?lesson_id=123&sign=ab8f&ts=17291580
 1. **进班 ≠ 签到。** 老师开了签到码，`inviteCode` 还是必须的。GUI 的「自动签到」只在无码签到下有效。
 2. **`on_lessons` 字段名不固定。** `ykt.norm_lesson()` 兜了 `lesson_id/courseware_id/id`、`classroom_id/cid` 多套命名。`live` 输出空但网页确实在上课时，把 `raw` 打出来对字段。
 3. **别把轮询拉满。** `/api/v3/*` 走统一网关，高频会撞限流。默认 5s 足够。
+
+## 开课检测：一条踩过的坑
+
+`正在上课` 的数据源不是 `/v/course_meta/on_lesson_courses`——那个端点无论登录与否都返回
+`{"success":true,"data":{"on_lessons":[]}}`，看着像成功，实际永远是空的。
+
+真实来源是 `/api/v3/classroom/on-lesson-upcoming-exam`，读 `data.onLessonClassrooms`。
+这条是从 PC 端 bundle 里这段解析代码倒推出来的：
+
+```js
+e = API.pc.index.on_lesson_upcoming_exam      // /api/v3/classroom/on-lesson-upcoming-exam
+if ((n = await get(e)).code === 0) {
+  l = n.data.onLessonClassrooms ?? []         // ← 正在上课的课堂
+  u = n.data.upcomingExam ?? []
+  lessonList = l.map(x => Object.assign(x, { id: x.lessonId, isV3: true }))
+}
+```
+
+条目字段（来自渲染模板）：`courseName`（课程名）、`classroomName`（班级名）、
+`lessonId`、`classroomId`、`courseId`、`role`（1/2 为教师侧，其余为学生）。
+
+之前两版之所以"有课却刷不出来"，就是因为查错了接口和容器字段。现已修正，
+并把老端点降级为兜底。
 
 ## 可行性评估
 
