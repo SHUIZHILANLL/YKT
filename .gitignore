@@ -1,17 +1,31 @@
-# 凭据与本地状态
+# ---------------------------------------------------------------- 发布策略
+# 本仓库只发布「协议文档 + 研究记录」，不发布可执行客户端。
+# 下面这些在本机仍存在，只是不进仓库（原因见 README「为什么这里没有客户端」）。
+ykt.py
+app_gui.py
+build.py
+requirements.txt
+一键签到.bat
+android/
+dist/
+YuketangClient.spec
+
+# ---------------------------------------------------------------- 凭据与本地状态
 session.json
+session.json.bak
 config.json
 *.log
 *.jsonl
 ykt/lab/
 
-# 构建产物
+# 提交信息草稿（用 git commit -F 传，不入库）
+_msg.txt
+
+# ---------------------------------------------------------------- 构建产物
 __pycache__/
 *.spec
 build/
-dist/*
-# 只保留 Android 安装包，桌面 exe 太大不放（用 build.py 自行构建）
-!dist/YuketangStudy-*.apk
+dist/
 
 # Android
 android/.gradle/
@@ -29,7 +43,7 @@ android/.idea/
 # 第三方 APK 及其解包产物（分析用，不入库）
 _analysis/
 
-session.json.bak
-
-# �ύ��Ϣ�ݸ壨�� -F ��������⣩
-_msg.txt
+# 抓包日志、自签证书与私钥
+*.pem
+*.key
+capture.log
