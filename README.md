@@ -287,6 +287,35 @@ r = { invite_code: code, source: 14 };             // 否则 → 旧接口
   这个错误同样没有业务码
 - 两个接口的业务错误码还是两套（新接口 50019/50070，旧接口 10041/10042）
 
+### 免暗号签到：一条尝试链
+
+老师**没开**大屏动态码时，签到可能根本不需要暗号。这两个端点属于「课中」功能组，
+PC 网页端 bundle 里只有定义没有调用点，服务的是小程序/H5 端：
+
+```
+POST /api/v3/lesson-summary/checkin   {lesson_id, classroom_id}
+POST /api/v3/lesson/checkin            {lesson_id, classroom_id}
+POST /api/v3/lesson/checkin            {lesson_id}
+```
+
+**参数是推断的，没有第三方实现可参考**，所以客户端不猜结论，而是逐个试、逐个打日志：
+
+```bash
+# 只探测、不提交暗号，逐个打印真实返回
+python ykt.py checkin-probe 1799823789292069248 --classroom-id 1234567
+```
+
+输出形如：
+
+```
+  ✅ lesson-summary/checkin      code=0       成功
+     lesson/checkin              code=50000   UNAUTHENTICATED
+     lesson/checkin(仅 lesson_id) code=50400   BAD_REQUEST
+```
+
+GUI 和 Android 里点「签到」会自动跑这条链；失败时日志里同样列出每一步的真实返回。
+**哪一步成了就是哪一步，不需要靠推测。**
+
 ## 可行性评估
 
 分三档：**已实测** / **原理成立但未端到端验证** / **依赖平台不变**。
