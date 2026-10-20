@@ -15,7 +15,9 @@
 
 ## ⚠️ 使用前必读
 
-**这个仓库在研究协议，不是在帮你处理学业事务。**请先读 [SECURITY.md](SECURITY.md)，里面写了凭据怎么存的（明文，不假装加密）、有哪些风险、以及什么行为会被认定为伪造考勤。
+**这个仓库在研究协议，不是在帮你处理学业事务。**请先读 [SECURITY.md](SECURITY.md)——
+里面写了凭据怎么存的（明文，不假装加密）、能力边界、以及**开源合法性评估**
+（著作权 / 反不正当竞争法第 12 条 / 刑法 285·286 / 个人信息保护法 / 平台规则，逐条给风险等级）。
 
 三句话概括：
 
@@ -28,8 +30,15 @@
 3. **「自动签到」是自动化考勤。** 人不在课堂却让它签到属于伪造出勤，违反课堂纪律。
    这个项目把该开关默认关闭，且**不实现**「超时补答 / 改成绩」那类功能。
 
+> **关于「免签到码」**：v0.3.0 起，填入官方 App 的 `sid` 后，签到走 App 原生接口
+> （`joinIfNotIn` 语义），**不再需要 5 位课堂暗号**。这是官方 App 自身的行为，
+> 不是绕过某个校验——但它的效果确实是「无暗号完成考勤」。**人不在课堂时不要开自动签到。**
+
 本项目与北京慕华信息科技有限公司无任何隶属或授权关系。使用可能违反雨课堂用户协议，
 后果由使用者承担。代码按 MIT 协议「原样」提供，不附带任何担保。
+
+仓库内**不含任何真实凭据或个人数据**（提交前用 `python tools/secret_scan.py` 自检，
+扫描范围含全部 git 历史）。
 
 ---
 
@@ -273,6 +282,48 @@ POST {source:14,lesson_id}       HTTP 403
 在没有真实 `sign` 的情况下无法进一步区分——而拿到 `sign` 就意味着扫了老师的码，
 本项目的立项目标（不扫码）也就没有意义了。
 
+### 后续：拿到官方客户端后查清的真实结构
+
+官方雨课堂客户端（Flutter，`libapp.so`，sha256 `cb7f26f8…`）的字符串池里有 **214 条
+API 路径**。据此厘清了接口分族与两层门：
+
+| 接口族 | 谁在用 | 网关要求 | 业务层凭证 |
+|---|---|---|---|
+| `/api/v3/lesson-summary/*` | PC 网页 | — | `cookie: sessionid` |
+| `/api/v3/classroom/*` | 两端 | — | `cookie: sessionid`（实测 200） |
+| **`/api/v3/lesson/*`** | **只有 App** | **`X-Client: app`** | **App 登录态（未获取到）** |
+
+第一层门是 `X-Client`，实测非常明确（同一个 `sessionid`）：
+
+```
+X-Client: web      → HTTP 401，无 Content-Type，
+                     x-envoy-decorator-operation: cube-api-gateway...
+X-Client: android  → HTTP 401
+X-Client: ios      → HTTP 401
+X-Client: app      → HTTP 200，application/json，code=50000
+```
+
+改 `X-Client: app` 之后请求才真正到达业务层（`50000 UNAUTHENTICATED`）。
+User-Agent（`okhttp` / `RainClassroom Android`）无影响，只有 `X-Client` 这一项起作用。
+
+第二层门没能过。Web 扫码登录下发的 `Auth`（36 字符）存在 `session.json` 的 `_auth` 里，
+但以下全部仍返回 `50000`：
+
+- `Authorization: Bearer / Token / JWT / Auth <_auth>`
+- `Auth:` / `X-Auth:` / `X-Auth-Token:` / `X-Access-Token:` / `X-Token:` / `token:` 头
+- `Authorization: Bearer <sessionid>`，以及 `Bearer <UserID>:<_auth>`
+- `X-Session-Id:` / `Sessionid:` / `X-Sessionid:` 头
+- `_auth` 或 `sessionid` 放进 Cookie
+- `X-UID` 头（`UserID=<你的 userId>`）
+
+`/api/v3/user/login/app` 与 `/api/v3/user/login/app/wechat` 直接返回 HTTP 500，无法作为入口。
+
+**结论**：`X-Client: app` 是网关门，改动它才能从 401 进到业务层；但业务层要的是
+**App 登录态**，而本项目只有 Web 扫码得到的 `sessionid`，两者不通用。
+App 登录走 `/api/v3/user/login/app*`（微信 SDK + 应用签名），超出协议逆向范围。
+
+因此 `/api/v3/lesson/*` 整族（签到、课件、弹幕、定位签到）在本项目里无法调用。
+
 ## 三个边界
 
 1. **进班 ≠ 签到。** 老师开了签到码，`inviteCode` 还是必须的。
@@ -303,24 +354,79 @@ if ((n = await get(e)).code === 0) {
 之前两版之所以"有课却刷不出来"，就是因为查错了接口和容器字段。现已修正，
 并把老端点降级为兜底。
 
-## 签到：必须带 5 位课堂暗号
+## 签到：已打通（App 原生接口，无需暗号）
 
-> **实测终局（2026-10-20，真实课堂进行中）**：不带暗号的 5 种组合
+> **2026-10-20 实测通过。** 官方 App 1.3.5 + 中间人抓包反推出的完整机制，
+> 两节直播课均签到成功，无暗号、无扫码。
+
+### 关键：v3 接口认的是 `sid`，不是 `sessionid`
+
+```
+cookie "sessionid=X"          -> code 50000 UNAUTHENTICATED
+cookie "sessionid=X; sid=Y"   -> code 0          ← 通了
+```
+
+`sid` 由官方 App 登录时下发，Web 扫码登录拿不到——**这就是之前所有 50000 的根因**。
+而且 `sid` 与 `sessionid` 不绑定：Web 扫码得到的 `sessionid` 配 App 的 `sid` 也能通。
+
+### 真正可用的签到调用
+
+```
+POST /api/v3/lesson/checkin
+body: {"source": 23, "lessonId": "<字符串>", "joinIfNotIn": true}
+cookie: sessionid=<任意有效会话>; sid=<App 的 sid>
+头:    x-client: app / xtua / version / xtbz / content-type: application/json
+```
+
+`joinIfNotIn: true` 就是"不在班就直接进班"，所以**进班和签到一步完成**，
+返回 `data.lessonToken`（JWT，含 lessonId/userId/identityId，有效期约 6 小时），
+后续课件、弹幕、答题都用它。
+
+两个坑（都踩过）：
+
+- **`lessonId` 必须是字符串**，传数字直接 `50400 BAD_REQUEST`
+- **不能带 `Authorization` 头**，也不要用带 cookie jar 的 Session 复用请求头，
+  必须与官方 App 完全一致的干净请求头
+
+### 怎么拿到 sid
+
+| 方式 | 命令 |
+|---|---|
+| 从抓包日志导入 | `python ykt.py app-import --from-capture _analysis/mitm/capture.log` |
+| 手动粘贴 | `python ykt.py app-import --sid <那串值>` |
+
+拿到后 `python ykt.py checkin <lesson_id>` 即可，`sid` 会写进 `session.json`。
+
+### 抓包方法（供复核）
+
+Flutter 的 `dart:io` **不读 Android 系统代理**，CONNECT 代理抓不到它。可行做法：
+
+1. 模拟器 `adb root`；`openssl` 自签 CA 与该域名的服务端证书
+2. 把 CA 塞进 `/data/local/tmp/ca/`，`mount --bind` 覆盖 `/system/etc/security/cacerts`
+   （Android 15 无法 remount /system，但 bind mount 可行）
+3. `adb reverse tcp:8081 tcp:8081`，再
+   `iptables -t nat -A OUTPUT -p tcp -d <yuketang IP> --dport 443 -j REDIRECT --to-ports 8081`
+4. 本机跑一个只转发该域名的 TLS 终结代理（脚本见 `_analysis/mitm/proxy_tp.py`）
+5. App 里操作几下，从日志里读 `cookie:` 行
+
+## 旧路径（已废弃，保留记录）
+
+「无码签到」的其它候选端点 `/api/v3/lesson-summary/checkin` 被 Envoy 直接拒
+（无 Content-Type、403/500 随机跳）；`/api/v3/lesson/checkin` 传 `{source:14}`
+只会得到 `50002 LESSON_UNAUTHORIZED`。真正的解法是上面这条 App 路径。
+
+
+> **当时的实测记录（结论已被取代）**：不带暗号的 5 种组合
 > —— `notkn/checkin` 的 `{source:14}`、`{source,lesson_id}`、不带 `Classroom-Id`，
-> 以及 `lesson/checkin` 的两种 —— **全部返回 `50002 LESSON_UNAUTHORIZED`**。
+> 以及 `lesson/checkin` 的两种 —— 全部返回 `50002 LESSON_UNAUTHORIZED`。
 >
-> 这说明两件事：
-> 1. **无码签到不存在**；缺暗号时链止于鉴权，连业务判断都到不了
-> 2. `LESSON_UNAUTHORIZED` 指"缺课堂上下文"，而课堂上下文恰恰是**签到成功后**才下发的
->    （bundle 里签到成功 → `handleJump(data, 2)` → `/lesson/fullscreen/v3/{lessonId}`）
->
-> 这是个闭环：**要进课堂得先签上，要签上得先有课堂上下文。** 唯一的突破口是老师给的
-> 5 位暗号（或扫大屏二维码拿到 `sign`）——也正是本项目想避开的那个动作。
+> 当时据此判断「无码签到不存在」，**这个判断是错的**。真正的缺口不是暗号，
+> 而是缺 `sid` cookie 和没带 `joinIfNotIn`。详见上面「签到：已打通」。
 >
 > 另注：`/api/v3/lesson-summary/student` **不是进班接口**，它在 `learning_summary`
 > （学习小结）组里，是课后报告接口，课进行中返回 `errorCode:-1` 属正常。
 
-PC 端 `joinClass` 里的真实逻辑（bundle `@5201763`）：
+带暗号的老逻辑（Web 网页端 `joinClass`，bundle `@5201763`），仍然有效但已非首选：
 
 ```js
 if (5 !== code.length) return 走 join_classroom;   // 不是 5 位 → 那是班级邀请码，不是签到
@@ -408,9 +514,11 @@ GUI 和 Android 里点「签到」会自动跑这条链；失败时日志里同�
 | **进班 `lesson-summary/student`** | ❌ **实测不通过** | 真实课堂进行中测 8 个变体（含 `&source=14`、`&sign=&ts=`），全部 `code=0` 但 `data.errorCode=-1`。该接口拒绝时顶层 code 仍为 0，靠 is_ok 判断会误报成功 |
 | 免扫码的**原理** | ❌ **已推翻** | 原论证"在册学生凭 sessionid 即可进班"未获证实；实测该接口对在册学生同样拒绝 |
 | `on_lessons` 字段名 | ✅ 已实测 | `live --raw` 实测字段为 `classroomId/classroomName/courseId/courseName/lessonId/role/openTeacher`，`role=5` 为学生 |
-| `/api/v3/lesson/checkin` body | ✅ 已实测 | body 必须含 `source`；只给 `lesson_id` 返回 50400；`{source:14}` 返回 50002 LESSON_UNAUTHORIZED（因进班未成功，缺课堂上下文） |
+| `/api/v3/lesson/checkin` body | ✅ 已实测 | App 形态 `{source:23, lessonId:"<字符串>", joinIfNotIn:true}`；`lessonId` 传数字会 50400 |
 | `/api/v3/lesson-summary/checkin` | ❌ 路由不可用 | Envoy 直接拒：无 Content-Type、只有 `x-envoy-*` 头、403/500 随形状跳变 |
-| 签到 | ❌ 阻塞在进班 | 参数层已确认，但拿不到课堂上下文 |
+| **`sid` cookie 是 v3 的凭证** | ✅ **已实测** | `sessionid` 单独 → 50000；`sessionid + sid` → code 0。`sid` 由 App 登录下发，与 sessionid 不绑定 |
+| **签到（App 接口）** | ✅ **已实测通过** | 两节直播课均 `code=0`，拿到 `lessonToken`；无暗号、无扫码 |
+| 进班 `joinIfNotIn` | ✅ 已实测 | 同一请求即完成"不在班则进班"，无需另调进班接口 |
 | 长期可用性 | ⚠️ 依赖平台 | 平台改协议、加风控、小程序审核都会让某一环失效 |
 | **Android 版编译** | ✅ 已实测 | `assembleDebug` 通过，aapt2 校验包名/权限/minSdk 正确，apksigner 验签通过 |
 | **Android 版运行时** | ❌ 未验证 | 无真机/模拟器，UI 与微信扫码识别均未跑过 |
