@@ -30,3 +30,6 @@ android/.idea/
 _analysis/
 
 session.json.bak
+
+# 提交信息草稿（用 -F 传，不入库）
+_msg.txt
