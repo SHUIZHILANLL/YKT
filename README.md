@@ -1,44 +1,242 @@
-# 雨课堂 Web 协议研究
+# 雨课堂协议研究
 
-对雨课堂（长江雨课堂）**公开 Web 前端**与后端之间协议的一次独立研究，附带一个用于验证结论的客户端。
+对**长江雨课堂**（`changjiang.yuketang.cn`）公开客户端与后端之间协议的独立研究，
+附带一个用来验证结论的客户端（Windows GUI + Android）。
 
-协议事实来自 PC 端 web bundle 的静态提取 + 端点实测，不依赖任何私有资料。
+所有结论来自**静态提取 + 真机抓包 + 真实课堂实测**，不依赖任何私有资料。
 
-**核心结论（已按实测修正）：雨课堂没有 `join` 接口，进班不是一次请求。但「凭 `sessionid` 直连
-`lesson-summary/student` 即可进班」这个推论——也是本项目最初的立项目标——在长江雨课堂上
-**实测不成立**：真实课堂进行中，该接口对在册学生同样返回 `data.errorCode=-1`。**
+<br>
 
-目前**确实可用**的是：扫码/Cookie 登录、课程与课次列表、**正在上课检测**。
-进班与签到不可用。详细证据与推翻过程见「『免扫码』：实测不成立」一节。
+**核心发现**：雨课堂 v3 接口的凭证不是 `sessionid`，而是 **`sid` cookie**。
+拿到它之后，官方 App 的签到接口一次调用即可**进班 + 签到**，不需要 5 位课堂暗号、不需要扫码。
+
+<br>
+
+| | |
+|---|---|
+| 🟢 **实测可用** | 扫码登录 · 课程与课次 · 开课检测 · **免暗号签到（App 接口）** |
+| 🔴 **未实现** | 改成绩 · 代答 · 超时补答 · 操作他人账号 |
+| ⚠️ **前置条件** | 签到需要官方 App 的 `sid`，见 [如何拿到 sid](#如何拿到-sid) |
 
 ---
 
-## ⚠️ 使用前必读
+## 它能做什么
 
-**这个仓库在研究协议，不是在帮你处理学业事务。**请先读 [SECURITY.md](SECURITY.md)——
-里面写了凭据怎么存的（明文，不假装加密）、能力边界、以及**开源合法性评估**
-（著作权 / 反不正当竞争法第 12 条 / 刑法 285·286 / 个人信息保护法 / 平台规则，逐条给风险等级）。
+| 能做 | 不能做 |
+|---|---|
+| 免扫码进入**你自己已选课**的课堂 | 进入你没选的课 |
+| **不需要签到码**完成签到 | 替别人签到、操作他人账号 |
+| 读取你自己账号的课程、课次、课件 | 读取别人的数据 |
+| 检测开课状态、一次签完所有在上的课 | 改成绩、代答、看别人答案 |
 
-三句话概括：
+---
 
-1. **只操作你自己的账号**，只进入你自己已选课的课堂。
-2. **默认请用观察模式**，它只检测开课并提示，不动手：
-   ```bash
-   python ykt.py watch --observe
-   ```
-   GUI 里取消勾选「检测到开课自动进班」效果相同。
-3. **「自动签到」是自动化考勤。** 人不在课堂却让它签到属于伪造出勤，违反课堂纪律。
-   这个项目把该开关默认关闭，且**不实现**「超时补答 / 改成绩」那类功能。
+## 截图
 
-> **关于「免签到码」**：v0.3.0 起，填入官方 App 的 `sid` 后，签到走 App 原生接口
-> （`joinIfNotIn` 语义），**不再需要 5 位课堂暗号**。这是官方 App 自身的行为，
-> 不是绕过某个校验——但它的效果确实是「无暗号完成考勤」。**人不在课堂时不要开自动签到。**
+![客户端界面](preview.png)
 
-本项目与北京慕华信息科技有限公司无任何隶属或授权关系。使用可能违反雨课堂用户协议，
-后果由使用者承担。代码按 MIT 协议「原样」提供，不附带任何担保。
+<details>
+<summary>登录界面</summary>
 
-仓库内**不含任何真实凭据或个人数据**（提交前用 `python tools/secret_scan.py` 自检，
-扫描范围含全部 git 历史）。
+![登录界面](preview_login.png)
+
+</details>
+
+---
+
+## 快速开始
+
+### 方式一：Windows 客户端（推荐）
+
+```bash
+pip install -r requirements.txt
+pip install pyinstaller
+python build.py --onefile      # 产物：dist/YuketangClient.exe（单文件，免安装）
+python app_gui.py              # 或者不打包，直接跑
+```
+
+> exe 有 54 MB，**没有放进仓库**（`.gitignore` 排除）。仓库里只放体积小的 Android APK。
+> 打包脚本已排除 PySide6 的 WebEngine / QML / Multimedia 等无关模块，体积比默认小一半。
+
+### 方式二：命令行
+
+```bash
+pip install -r requirements.txt
+
+python ykt.py login                 # 微信扫码，一次即可，登录态落盘
+python ykt.py live                  # 看哪节课正在上
+python ykt.py checkin --live        # 一次签完所有正在上的课
+python ykt.py watch --observe       # 【推荐】只检测开课，不动手
+```
+
+仓库根目录另有 `一键签到.bat`，双击等价于 `checkin --live`。
+
+### 方式三：Android
+
+`dist/YuketangStudy-0.3.0-debug.apk`（debug 签名，直接安装）。
+
+**这不是桌面版打包过来的**——PySide6 没有 Android 目标，是独立重写的一份：
+纯 Java + 原生 Views + `HttpURLConnection`，零第三方依赖。详见 [android/README.md](android/README.md)。
+
+```bash
+cd android
+export JAVA_HOME=/path/to/jdk-17      # compileSdk 34
+export ANDROID_HOME=/path/to/android-sdk
+./gradlew assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+> Android 版**能编译、包结构已校验（aapt2 + apksigner）**，界面与签到流程在模拟器上验证过；
+> 国产 ROM 的后台存活仍需自行确认。
+
+---
+
+## 核心：签到是怎么通的
+
+### 一句话
+
+`sid` 是 v3 接口认的凭证，`joinIfNotIn` 让签到顺带完成进班。
+
+### 凭证对照（同一 `lesson_id`，只换凭证）
+
+```
+cookie "sessionid=X"          -> 50000 UNAUTHENTICATED
+cookie "sessionid=X; sid=Y"   -> 0
+```
+
+`sid` 由官方 App 登录时下发，Web 扫码登录拿不到，且**与 sessionid 不绑定**
+（Web 的 `sessionid` 配 App 的 `sid` 同样能通）。
+
+### 调用
+
+```
+POST /api/v3/lesson/checkin
+body: {"source":23, "lessonId":"<字符串>", "joinIfNotIn":true}
+cookie: sessionid=<任意有效会话>; sid=<App 的 sid>
+```
+
+返回 `data.lessonToken`（JWT，含 `lessonId/userId/identityId`，有效期 6 小时），
+后续课件、弹幕、答题都用它。
+
+### 两个必须记住的坑
+
+| 坑 | 后果 |
+|---|---|
+| `lessonId` 传**数字** | `50400 BAD_REQUEST`，必须字符串 |
+| 请求带 `Authorization` 头 | 同样 `50400`，必须与官方 App 一致的干净请求头 |
+
+---
+
+## 如何拿到 sid
+
+`sid` 在官方 App 的请求 Cookie 里。抓一次包即可，**一次拿到可以长期用**（App 退出登录后失效）。
+
+本仓库验证过的做法（Flutter 不读系统代理，CONNECT 代理抓不到，必须透明重定向）：
+
+1. 模拟器 `adb root`
+2. `openssl` 自签 CA + 目标域名证书
+3. `mount --bind` 覆盖 `/system/etc/security/cacerts`
+4. `adb reverse tcp:8081 tcp:8081`
+5. `iptables -t nat -A OUTPUT -p tcp -d <yuketang IP> --dport 443 -j REDIRECT --to-ports 8081`
+6. 本机跑只转发该域名的 TLS 终结代理
+7. 在 App 里点几下，从日志的 `cookie:` 行取 `sid=`
+
+详细步骤与踩坑见 [docs/FINDINGS.md](docs/FINDINGS.md) 第二节。
+
+拿到后导入：
+
+```bash
+python ykt.py app-import --sid <那串值>
+python ykt.py app-import --from-capture path/to/capture.log
+```
+
+导入会**同时写两个位置**：仓库根目录（源码运行读它）和 `dist/`（exe 读它）。
+
+### sid 失效了
+
+```
+[!] App 的 sid 已失效（登录态过期）
+```
+
+在官方 App 里重新登录一次，再 `app-import` 一次即可。不需要重新搭抓包环境。
+
+---
+
+## 项目结构
+
+```
+ykt.py                 协议后端 + CLI（GUI 直接 import 它）
+app_gui.py             PySide6 图形界面
+build.py               PyInstaller 打包
+一键签到.bat            双击签完所有正在上的课
+tools/secret_scan.py   提交前凭据自检（扫工作区 + 全部 git 历史）
+
+android/               Android 工程（纯 Java，零依赖）
+docs/FINDINGS.md       研究记录：证据、推翻过的假设、端点总表
+SECURITY.md            凭据处理、能力边界、开源合法性评估
+NOTICE.md              来源致谢 + 商标声明
+GONGXIAOHU-ANALYSIS.md 第三方 App「工小湖」的机制与隐私提示
+```
+
+### session.json 在哪
+
+| 运行方式 | 位置 |
+|---|---|
+| `python ykt.py …` | 仓库根目录 |
+| `dist/YuketangClient.exe` | **exe 所在目录**（即 `dist/`） |
+
+两处是**不同的文件**，所以 CLI 和 GUI 默认不共享会话。这也是「命令行能签、exe 说没有 sid」
+的常见原因——用 `app-import` 导入会同时写两边。
+
+---
+
+## 常见问题
+
+**Q：为什么 exe 说「没有 App 的 sid」，但命令行能签？**
+两个 `session.json` 不是同一个文件。重新跑一次 `app-import`，它会同时写两边。
+
+**Q：`live` 显示没有课，但网页上确实在上课？**
+字段名在不同部署下不一致。跑 `python ykt.py live --raw` 看原始 JSON 对字段名。
+
+**Q：签到失败提示 `UNAUTHENTICATED`？**
+`sid` 过期。去官方 App 重新登录后重新导入。
+
+**Q：老师开了大屏动态码，还能签吗？**
+能。`sid` 这条路径不依赖二维码里的 `sign`。
+
+**Q：会被发现吗？**
+教师端能看到签到时间戳与来源。自动化签到的时间分布与人手不同，**不是不可发现的**。
+
+---
+
+## 已知限制
+
+- **`sid` 是会话级凭证**：App 退出登录、改密码后失效，需要重新获取
+- **开课检测字段名不固定**：`ykt.norm_lesson()` 兜了 `lesson_id/courseware_id/id` 等多套命名
+- **轮询别拉满**：`/api/v3/*` 走统一网关，默认 5 秒足够
+- **二维码 60 秒过期**：登录框会自动换码，正在扫的那张会失效
+- **切换后端后需重新登录**：cookie 绑域名
+
+---
+
+## 安全与合规
+
+请先读 **[SECURITY.md](SECURITY.md)**，其中包含：
+
+- 凭据怎么存的（**明文，不假装加密**）以及为什么
+- 本仓库**不含任何真实凭据或个人数据**（`tools/secret_scan.py` 可复核，扫描含全部 git 历史）
+- **开源合法性评估**：著作权 / 反不正当竞争法第 12 条 / 刑法 285·286 / 个人信息保护法 / 平台规则，逐条给风险等级
+
+三条底线：
+
+1. **只操作你自己的账号**，只进入你自己已选课的课堂
+2. **默认用观察模式**：`python ykt.py watch --observe`
+3. **人不在课堂时不要开自动签到**——那是伪造出勤，违反课堂纪律，后果由使用者承担
+
+本项目与北京慕华信息科技有限公司**无任何隶属或授权关系**。使用可能违反雨课堂用户协议。
+代码按 MIT 协议「原样」提供，不附带任何担保。
+
+> ⚠️ 分发时**只拿 exe 和 apk 两个文件**，不要打包整个 `dist/` —— 里面可能有你的 `session.json`。
 
 ---
 
@@ -51,524 +249,18 @@
 - **[rainclassroom-scrapper](https://gitbucket.skyw.top/physicsdolphin/rainclassroom-scrapper)** by physicsdolphin — **WebSocket 扫码登录的具体实现**，没有这份参考本项目登录部分无从下手
 - **[Ajax 的雨课堂爬虫笔记](https://aajax.top/2025/01/10/YuketangScrapper/)** — 课程/课次接口与 `offset` 实为 PageSize 的坑
 
-需要说明：本项目与原博客的部分技术结论**看起来**有分歧，但其中一条已被证伪（是本文曾经的判断失误）：
+### 关于「工小湖」这个 App
 
-- 早期本文断言「登录是 WebSocket，博客说的长轮询不存在」。查证后发现：
-  **博客的长轮询是他自建网关 `hnit.jiclub.site` 的 `POST /api/ykt/auth/login-qr`**，
-  而 PC 网页端确实是 WebSocket。两者都对，是两个不同的客户端。
-  详见 [GONGXIAOHU-ANALYSIS.md](GONGXIAOHU-ANALYSIS.md)。
-- 其余差异（`get_user_course_list` 端点名、`status == 1` 判断）仍按对照表处理。
-
-### 关于「工小湖」这个 App 的一点提示
-
-本文对它做过一次静态分析，结论放在 [GONGXIAOHU-ANALYSIS.md](GONGXIAOHU-ANALYSIS.md)。
+本项目对它做过静态分析，结论在 [GONGXIAOHU-ANALYSIS.md](GONGXIAOHU-ANALYSIS.md)。
 一句话版本：它会把你雨课堂的**会话 cookie 发往作者自建服务器**，签到也由那台服务器代签。
 它能自动签到，成立前提是**老师没开大屏动态码**——开了之后它同样签不上。
 
-这不是漏洞指控，是数据流向的事实。用不用，你自己权衡。
+这不是漏洞指控，是数据流向的事实。
 
 ---
 
-## 三种用法
+## 许可
 
-![客户端界面](preview.png)
+[MIT](LICENSE) © 2026 SHUIZHILANLL
 
-### 1. GUI 客户端（推荐）
-
-已打包好的单文件程序：`dist/YuketangClient.exe`，双击即用，不需要装 Python。
-
-从源码跑：
-
-```bash
-pip install -r requirements.txt
-python app_gui.py
-```
-
-界面结构：
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│ 雨课堂客户端   [姓名·学校·学号]              [刷新]  [登录]    │
-├───────────────┬──────────────────────────────────────────────┤
-│ 我的课程       │  实时课堂 │ 课程课次 │ 运行日志              │
-│ [搜索…]        │  ┌──────────────────────────────────────┐    │
-│ ┌───────────┐ │  │ 课堂        lesson_id  状态   操作    │    │
-│ │高等数学    │ │  │ 高数A(下)   998877    进行中 [进班][签到]│  │
-│ │ 班级·教师  │ │  └──────────────────────────────────────┘    │
-│ │大学物理    │ │                                              │
-│ └───────────┘ │                                              │
-├───────────────┴──────────────────────────────────────────────┤
-│ ☑自动进班  ☐自动签到  签到码[__]  轮询[5s]  ● 监控中  [停止]  │
-└──────────────────────────────────────────────────────────────┘
-```
-
-功能：
-
-- **扫码登录** — 内嵌二维码，登录态落盘，下次自动恢复
-- **课程列表** — 搜索过滤；双击课程看它的课次
-- **实时课堂** — 轮询开课状态，检测到自动进班，表格每行可手动进班/签到
-- **课程课次** — 列出该课所有课次（回放/课件），任意课次可单独进班
-- **运行日志** — 全量请求日志，出问题看这里
-
-### 2. 命令行
-
-```bash
-python ykt.py probe      # 免登录自证端点真实性
-python ykt.py login      # 微信扫码一次
-python ykt.py courses    # 列课程
-python ykt.py live       # 查正在上课的课堂
-python ykt.py live --raw # 同上，并打印服务端原始字段（字段名对不上时用这个）
-python ykt.py watch --observe   # 【推荐】只检测开课，不进班不签到
-python ykt.py watch      # 常驻轮询自动进班
-python ykt.py enter 998877
-python ykt.py checkin 998877 1234
-```
-
-### 3. Android APK
-
-`dist/YuketangStudy-0.1.0-debug.apk`（60 KB，debug 签名，直接安装）。
-
-**这不是桌面版打包过来的**——PySide6 没有 Android 目标，所以是独立重写的一份：
-纯 Java + 原生 Views + `HttpURLConnection`，零第三方依赖。详见 [android/README.md](android/README.md)。
-
-登录方式和桌面版不同：手机没法用微信扫自己屏幕上的码，所以改成
-**截图 → 微信「扫一扫」→ 相册 → 选截图 → 确认**，App 自动轮询拿到 `sessionid`。
-这条链路走的是微信开放平台的 HTTP 轮询，不是桌面版的 WebSocket。
-
-从源码构建：
-
-```bash
-cd android
-# 需要 JDK 17 + Android SDK (compileSdk 34)
-export JAVA_HOME=/path/to/jdk-17
-export ANDROID_HOME=/path/to/android-sdk
-./gradlew assembleDebug
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-```
-
-> ⚠️ APK **能编译、包结构已校验（aapt2 + apksigner），但没有在真机或模拟器上跑过**。
-> UI 细节、微信扫码的实际识别、国产 ROM 上的后台存活，都需要你自己验证。
-
-## 打包（桌面端）
-
-```bash
-pip install pyinstaller
-python build.py            # 目录版，启动快
-python build.py --onefile  # 单文件版，分发方便
-```
-
-产物在 `dist/`。`build.py` 已经排除了 PySide6 的 WebEngine/QML/Multimedia 等无关模块，体积比默认小一半。
-
-## 实测端点矩阵
-
-| 端点 | 方法 | 免鉴权 | 说明 |
-|---|---|---|---|
-| `/v2/api/web/courses/list?identity=2` | GET | 否 | 课程列表，要 `sessionid` |
-| `/v2/api/web/classroom_archive` | GET | 否 | 归档课程 |
-| `/v2/api/web/logs/learn/{cid}?actype=-1&page=0&offset=500&sort=-1` | GET | 否 | 课次列表（`offset` 实际是 PageSize）|
-| `/api/v3/classroom/on-lesson-upcoming-exam` | GET | 否 | **正在上课的真实数据源**，读 `data.onLessonClassrooms` |
-| `/v/course_meta/on_lesson_courses` | GET | **是** | 兜底。无论登录与否都返回 `{"success":true,"data":{"on_lessons":[]}}`，实际是空的 |
-| `/api/v3/classroom/on-lesson` | GET | 否 | 兜底 |
-| `/api/v3/lesson-summary/student?lesson_id=X` | GET | 否 | 进班尝试入口。**实测对在册学生也返回 `data.errorCode=-1`，进班不成立** |
-| `/api/v3/lesson-summary/student/presentation?presentation_id=&lesson_id=` | GET | 否 | 课件 |
-| `/api/v3/lesson/notkn/checkin` | POST | 否 | 签到 `{source, inviteCode}` |
-| `/api/lesson/web_check_in` | POST | 否 | 旧签到，需 CSRF |
-| `/api/v3/user/basic-info` | GET | 否 | 判活 |
-
-## 登录态：扫一次就够了
-
-`sessionid` 存在本地，每次启动直接复用，**不需要反复扫码**。只在四种情况要重扫：
-
-1. 服务端会话过期
-2. 点了「退出」
-3. 卸载 / 清除数据（桌面版则是删掉 `session.json`）
-4. 切换了后端域名（cookie 绑域名）
-
-启动时会校验一次，并区分两种情况——这个区分很重要：
-
-| 结果 | 行为 |
-|---|---|
-| 会话有效 | 正常使用，界面显示「已登录 · 姓名 · 已 N 天」 |
-| **服务端判定过期** | 清凭据并明确提示「登录已失效（上次登录 N 天前）」 |
-| **只是没网** | **保留凭据**，只提示联网后重试 |
-
-第三行是关键：如果不区分，断网时也会把人踢去重新扫码，白扫一次。
-Android 版（v0.1.3+）行为与此一致。
-
-## 登录协议（桌面版：WebSocket）
-
-默认后端是 **长江雨课堂 `changjiang.yuketang.cn`**（根路径 302 → `/web`）。`changjiang.ykt.io` 是同一后端的别名域名，可以在登录框的下拉里切换。
-
-```
-wss://changjiang.yuketang.cn/wsapp/
-  → send {"op":"requestlogin","role":"web","version":1.4,"type":"qrcode","from":"web"}
-  ← {"op":"requestlogin","loginid":"<uuid>","expire_seconds":60,
-     "ticket":"https://mp.weixin.qq.com/cgi-bin/showqrcode?ticket=...",
-     "qrcode":"http://weixin.qq.com/q/02I3...","isReply":true}
-  ← {... "subscribe_status":..., "UserID":..., "Auth":...}   # 扫码确认后
-GET  /v/course_meta/user_info          # 顺带下发 csrftoken
-POST /pc/web_login  {"UserID":..,"Auth":..}  → Set-Cookie: sessionid
-```
-
-三个容易踩的点：
-
-1. **`UserID`/`Auth` 在 `subscribe_status` 那条消息里**，不在第一帧。只存第一帧会导致"扫码成功但一直报登录失败"。
-2. **`qrcode` 字段是 `http://weixin.qq.com/q/...` 短链，不是 qrconnect URL**，直接把它编码成二维码即可。`ticket` 字段则是微信官方二维码图片地址。
-3. **二维码只有 `expire_seconds`（实测 60）秒有效期**，过期必须重新发 `requestlogin` 换新码。
-
-## 扫码不行时：粘 Cookie
-
-扫码链路受微信端状态影响，偶发失败很正常。兜底路径是直接粘浏览器里的 `sessionid`：
-
-1. 浏览器打开 `https://changjiang.yuketang.cn/web` 并登录
-2. F12 → Application → Cookies → 选中该域名 → 复制 `sessionid` 的值
-3. GUI 登录框点「扫码不行？粘贴 Cookie」；或命令行：
-
-```bash
-python ykt.py cookie <sessionid>
-```
-
-## 切换后端
-
-```bash
-python ykt.py host                 # 看当前 + 可选项
-python ykt.py host 雨课堂专业版      # 切换并记住
-python ykt.py login --host 长江雨课堂
-```
-
-可选：`长江雨课堂` / `长江雨课堂(ykt.io)` / `雨课堂专业版` / `雨课堂`。
-
-## 「免扫码」：实测不成立（原来的说法已推翻）
-
-> **这一节原来写的是"免扫码成立"。实测之后必须更正：在长江雨课堂上不成立。**
-
-过去这里的论证是：`sign` 只约束名单外的旁听生，在册学生凭 `sessionid` 就已经有该
-`lesson_id` 的访问权，所以 `GET /api/v3/lesson-summary/student?lesson_id=X` 返回
-`success:true` 就等于进班了。
-
-**这套推理没有经过验证，实测把它推翻了。**
-
-2026-10-20 在**真实课堂进行中**（`live --raw` 同时返回两节开课）测试 8 个变体：
-
-```
-GET  仅 Referer                  HTTP 200  code=0  data.errorCode=-1
-GET  + Classroom-Id              HTTP 200  code=0  data.errorCode=-1
-GET  + Accept: application/json  HTTP 200  code=0  data.errorCode=-1
-GET  &source=14                  HTTP 200  code=0  data.errorCode=-1
-GET  &source=14（无 Classroom-Id）HTTP 200  code=0  data.errorCode=-1
-GET  &sign=&ts=                  HTTP 200  code=0  data.errorCode=-1
-POST {source:14}                 HTTP 403   （Envoy 拦，该接口只收 GET）
-POST {source:14,lesson_id}       HTTP 403
-```
-
-**全部 `errorCode: -1`。**
-
-这里有个必须知道的坑：**该接口拒绝时顶层 `code` 仍然是 `0`**，真实结论在
-`data.errorCode`。只看顶层 `code` 会把失败当成功——本项目早期就因此误报过
-「已进班 / 课件0份」。
-
-```json
-{"code": 0, "data": {"errorCode": -1}}
-```
-
-因此：
-
-- **进班这条路径目前不通**，本项目的"秒进班"能力不成立
-- 依赖进班上下文的签到自然也拿不到（`/api/v3/lesson/checkin` 返回
-  `50002 LESSON_UNAUTHORIZED`）
-- 「在册学生不需要 `sign`」这句话，至少在这个部署上没有得到证实
-
-仍待确认：`errorCode -1` 究竟表示"缺少签名""不是正确入口"还是"该部署关闭了此接口"。
-在没有真实 `sign` 的情况下无法进一步区分——而拿到 `sign` 就意味着扫了老师的码，
-本项目的立项目标（不扫码）也就没有意义了。
-
-### 后续：拿到官方客户端后查清的真实结构
-
-官方雨课堂客户端（Flutter，`libapp.so`，sha256 `cb7f26f8…`）的字符串池里有 **214 条
-API 路径**。据此厘清了接口分族与两层门：
-
-| 接口族 | 谁在用 | 网关要求 | 业务层凭证 |
-|---|---|---|---|
-| `/api/v3/lesson-summary/*` | PC 网页 | — | `cookie: sessionid` |
-| `/api/v3/classroom/*` | 两端 | — | `cookie: sessionid`（实测 200） |
-| **`/api/v3/lesson/*`** | **只有 App** | **`X-Client: app`** | **App 登录态（未获取到）** |
-
-第一层门是 `X-Client`，实测非常明确（同一个 `sessionid`）：
-
-```
-X-Client: web      → HTTP 401，无 Content-Type，
-                     x-envoy-decorator-operation: cube-api-gateway...
-X-Client: android  → HTTP 401
-X-Client: ios      → HTTP 401
-X-Client: app      → HTTP 200，application/json，code=50000
-```
-
-改 `X-Client: app` 之后请求才真正到达业务层（`50000 UNAUTHENTICATED`）。
-User-Agent（`okhttp` / `RainClassroom Android`）无影响，只有 `X-Client` 这一项起作用。
-
-第二层门没能过。Web 扫码登录下发的 `Auth`（36 字符）存在 `session.json` 的 `_auth` 里，
-但以下全部仍返回 `50000`：
-
-- `Authorization: Bearer / Token / JWT / Auth <_auth>`
-- `Auth:` / `X-Auth:` / `X-Auth-Token:` / `X-Access-Token:` / `X-Token:` / `token:` 头
-- `Authorization: Bearer <sessionid>`，以及 `Bearer <UserID>:<_auth>`
-- `X-Session-Id:` / `Sessionid:` / `X-Sessionid:` 头
-- `_auth` 或 `sessionid` 放进 Cookie
-- `X-UID` 头（`UserID=<你的 userId>`）
-
-`/api/v3/user/login/app` 与 `/api/v3/user/login/app/wechat` 直接返回 HTTP 500，无法作为入口。
-
-**结论**：`X-Client: app` 是网关门，改动它才能从 401 进到业务层；但业务层要的是
-**App 登录态**，而本项目只有 Web 扫码得到的 `sessionid`，两者不通用。
-App 登录走 `/api/v3/user/login/app*`（微信 SDK + 应用签名），超出协议逆向范围。
-
-因此 `/api/v3/lesson/*` 整族（签到、课件、弹幕、定位签到）在本项目里无法调用。
-
-## 三个边界
-
-1. **进班 ≠ 签到。** 老师开了签到码，`inviteCode` 还是必须的。
-2. **开课检测字段名不固定。** `ykt.norm_lesson()` 兜了 `lesson_id/courseware_id/id`、
-   `classroom_id/cid` 多套命名。`live` 输出空但网页确实在上课时，把 `raw` 打出来对字段。
-3. **别把轮询拉满。** `/api/v3/*` 走统一网关，高频会撞限流。默认 5s 足够。
-
-## 开课检测：一条踩过的坑
-
-`正在上课` 的数据源不是 `/v/course_meta/on_lesson_courses`——那个端点无论登录与否都返回
-`{"success":true,"data":{"on_lessons":[]}}`，看着像成功，实际永远是空的。
-
-真实来源是 `/api/v3/classroom/on-lesson-upcoming-exam`，读 `data.onLessonClassrooms`。
-这条是从 PC 端 bundle 里这段解析代码倒推出来的：
-
-```js
-e = API.pc.index.on_lesson_upcoming_exam      // /api/v3/classroom/on-lesson-upcoming-exam
-if ((n = await get(e)).code === 0) {
-  l = n.data.onLessonClassrooms ?? []         // ← 正在上课的课堂
-  u = n.data.upcomingExam ?? []
-  lessonList = l.map(x => Object.assign(x, { id: x.lessonId, isV3: true }))
-}
-```
-
-条目字段（来自渲染模板）：`courseName`（课程名）、`classroomName`（班级名）、
-`lessonId`、`classroomId`、`courseId`、`role`（1/2 为教师侧，其余为学生）。
-
-之前两版之所以"有课却刷不出来"，就是因为查错了接口和容器字段。现已修正，
-并把老端点降级为兜底。
-
-## 签到：已打通（App 原生接口，无需暗号）
-
-> **2026-10-20 实测通过。** 官方 App 1.3.5 + 中间人抓包反推出的完整机制，
-> 两节直播课均签到成功，无暗号、无扫码。
-
-### 关键：v3 接口认的是 `sid`，不是 `sessionid`
-
-```
-cookie "sessionid=X"          -> code 50000 UNAUTHENTICATED
-cookie "sessionid=X; sid=Y"   -> code 0          ← 通了
-```
-
-`sid` 由官方 App 登录时下发，Web 扫码登录拿不到——**这就是之前所有 50000 的根因**。
-而且 `sid` 与 `sessionid` 不绑定：Web 扫码得到的 `sessionid` 配 App 的 `sid` 也能通。
-
-### 真正可用的签到调用
-
-```
-POST /api/v3/lesson/checkin
-body: {"source": 23, "lessonId": "<字符串>", "joinIfNotIn": true}
-cookie: sessionid=<任意有效会话>; sid=<App 的 sid>
-头:    x-client: app / xtua / version / xtbz / content-type: application/json
-```
-
-`joinIfNotIn: true` 就是"不在班就直接进班"，所以**进班和签到一步完成**，
-返回 `data.lessonToken`（JWT，含 lessonId/userId/identityId，有效期约 6 小时），
-后续课件、弹幕、答题都用它。
-
-两个坑（都踩过）：
-
-- **`lessonId` 必须是字符串**，传数字直接 `50400 BAD_REQUEST`
-- **不能带 `Authorization` 头**，也不要用带 cookie jar 的 Session 复用请求头，
-  必须与官方 App 完全一致的干净请求头
-
-### 怎么拿到 sid
-
-| 方式 | 命令 |
-|---|---|
-| 从抓包日志导入 | `python ykt.py app-import --from-capture _analysis/mitm/capture.log` |
-| 手动粘贴 | `python ykt.py app-import --sid <那串值>` |
-
-拿到后 `python ykt.py checkin <lesson_id>` 即可，`sid` 会写进 `session.json`。
-
-### 抓包方法（供复核）
-
-Flutter 的 `dart:io` **不读 Android 系统代理**，CONNECT 代理抓不到它。可行做法：
-
-1. 模拟器 `adb root`；`openssl` 自签 CA 与该域名的服务端证书
-2. 把 CA 塞进 `/data/local/tmp/ca/`，`mount --bind` 覆盖 `/system/etc/security/cacerts`
-   （Android 15 无法 remount /system，但 bind mount 可行）
-3. `adb reverse tcp:8081 tcp:8081`，再
-   `iptables -t nat -A OUTPUT -p tcp -d <yuketang IP> --dport 443 -j REDIRECT --to-ports 8081`
-4. 本机跑一个只转发该域名的 TLS 终结代理（脚本见 `_analysis/mitm/proxy_tp.py`）
-5. App 里操作几下，从日志里读 `cookie:` 行
-
-## 旧路径（已废弃，保留记录）
-
-「无码签到」的其它候选端点 `/api/v3/lesson-summary/checkin` 被 Envoy 直接拒
-（无 Content-Type、403/500 随机跳）；`/api/v3/lesson/checkin` 传 `{source:14}`
-只会得到 `50002 LESSON_UNAUTHORIZED`。真正的解法是上面这条 App 路径。
-
-
-> **当时的实测记录（结论已被取代）**：不带暗号的 5 种组合
-> —— `notkn/checkin` 的 `{source:14}`、`{source,lesson_id}`、不带 `Classroom-Id`，
-> 以及 `lesson/checkin` 的两种 —— 全部返回 `50002 LESSON_UNAUTHORIZED`。
->
-> 当时据此判断「无码签到不存在」，**这个判断是错的**。真正的缺口不是暗号，
-> 而是缺 `sid` cookie 和没带 `joinIfNotIn`。详见上面「签到：已打通」。
->
-> 另注：`/api/v3/lesson-summary/student` **不是进班接口**，它在 `learning_summary`
-> （学习小结）组里，是课后报告接口，课进行中返回 `errorCode:-1` 属正常。
-
-带暗号的老逻辑（Web 网页端 `joinClass`，bundle `@5201763`），仍然有效但已非首选：
-
-```js
-if (5 !== code.length) return 走 join_classroom;   // 不是 5 位 → 那是班级邀请码，不是签到
-if (/[0-9]/.test(code.charAt(0))) return checkin(14, code);   // 首位数字 → 新接口
-r = { invite_code: code, source: 14 };             // 否则 → 旧接口
-```
-
-| 条件 | 端点 | 请求体 |
-|---|---|---|
-| 码 5 位且首位是数字 | `POST /api/v3/lesson/notkn/checkin` | `{source:14, inviteCode:码}` |
-| 码 5 位且首位非数字 | `POST /api/lesson/web_check_in` | `{invite_code:码, source:14}` + `X-CSRFToken` |
-
-坑点：
-
-- **发空码会得到 `50400 BAD_REQUEST`**，服务端不解释原因，很容易误判成"接口挂了"
-- 旧接口是 Django，缺 `X-CSRFToken` 会报 `CSRF token missing or incorrect`，
-  这个错误同样没有业务码
-- 两个接口的业务错误码还是两套（新接口 50019/50070，旧接口 10041/10042）
-
-### 免暗号签到：一条尝试链
-
-老师**没开**大屏动态码时，签到可能根本不需要暗号。这两个端点属于「课中」功能组，
-PC 网页端 bundle 里只有定义没有调用点，服务的是小程序/H5 端：
-
-```
-POST /api/v3/lesson-summary/checkin   {lesson_id, classroom_id}
-POST /api/v3/lesson/checkin            {lesson_id, classroom_id}
-POST /api/v3/lesson/checkin            {lesson_id}
-```
-
-**参数是推断的，没有第三方实现可参考**，所以客户端不猜结论，而是逐个试、逐个打日志：
-
-```bash
-# 只探测、不提交暗号，逐个打印真实返回
-python ykt.py checkin-probe 1799823789292069248 --classroom-id 1234567
-```
-
-### 课中接口 403 与 `set-auth`
-
-`lesson-summary/*` 这组接口要的不是 cookie。PC 端 bundle 里的 axios 默认头揭示了原因：
-
-```js
-if (response.headers && response.headers["set-auth"])
-    window.Authorization = response.headers["set-auth"];   // 服务端下意识下发
-
-axios.defaults.headers["X-Client"]      = "web";
-axios.defaults.headers.Authorization    = "Bearer " + window.Authorization;
-axios.defaults.headers["X-UID"]         = window.userid;
-axios.defaults.headers["classroom-id"]  = classroomId;
-```
-
-所以客户端现在会捕获每个响应头里的 `set-auth`，并自动附带这三个头。
-
-**但 `set-auth` 不是进班接口给的**——实测 `/api/v3/lesson-summary/student/{id}` 的响应里没有。
-哪个接口给，用这条命令逐个查（会打印每个接口的 HTTP 状态、`set-auth` 长度、以及其它
-名字里带 auth/token/session 的响应头）：
-
-```bash
-python ykt.py auth-probe 1799823789292069248 --classroom-id 1234567
-```
-
-输出里 `set-auth` 长度大于 0 的那一行，就是 token 的来源。
-
-输出形如：
-
-```
-  ✅ lesson-summary/checkin      code=0       成功
-     lesson/checkin              code=50000   UNAUTHENTICATED
-     lesson/checkin(仅 lesson_id) code=50400   BAD_REQUEST
-```
-
-GUI 和 Android 里点「签到」会自动跑这条链；失败时日志里同样列出每一步的真实返回。
-**哪一步成了就是哪一步，不需要靠推测。**
-
-## 可行性评估
-
-分三档：**已实测** / **原理成立但未端到端验证** / **依赖平台不变**。
-
-| 环节 | 状态 | 依据 |
-|---|---|---|
-| 域名与 API 网关 | ✅ 已实测 | `/v2/api/*` 返 `401002 Cookie has no sessionid`，`/api/v3/*` 返 `50000 UNAUTHENTICATED`，都是真接口 |
-| 开课感知 `on_lesson_courses` | ✅ 已实测 | 免鉴权直接返 `{"success":true,"data":{"on_lessons":[]}}` |
-| 登录 WebSocket | ✅ 已实测 | ws 握手成功、二维码正常下发、`expire_seconds:60` 可见 |
-| **扫码到 sessionid 的完整闭环** | ⚠️ 未端到端 | 缺一个真实微信账号跑完；`UserID/Auth` 在 `subscribe_status` 帧里（已按此实现），若字段名不同，登录框底部 ws 日志会直接显示 |
-| **进班 `lesson-summary/student`** | ❌ **实测不通过** | 真实课堂进行中测 8 个变体（含 `&source=14`、`&sign=&ts=`），全部 `code=0` 但 `data.errorCode=-1`。该接口拒绝时顶层 code 仍为 0，靠 is_ok 判断会误报成功 |
-| 免扫码的**原理** | ❌ **已推翻** | 原论证"在册学生凭 sessionid 即可进班"未获证实；实测该接口对在册学生同样拒绝 |
-| `on_lessons` 字段名 | ✅ 已实测 | `live --raw` 实测字段为 `classroomId/classroomName/courseId/courseName/lessonId/role/openTeacher`，`role=5` 为学生 |
-| `/api/v3/lesson/checkin` body | ✅ 已实测 | App 形态 `{source:23, lessonId:"<字符串>", joinIfNotIn:true}`；`lessonId` 传数字会 50400 |
-| `/api/v3/lesson-summary/checkin` | ❌ 路由不可用 | Envoy 直接拒：无 Content-Type、只有 `x-envoy-*` 头、403/500 随形状跳变 |
-| **`sid` cookie 是 v3 的凭证** | ✅ **已实测** | `sessionid` 单独 → 50000；`sessionid + sid` → code 0。`sid` 由 App 登录下发，与 sessionid 不绑定 |
-| **签到（App 接口）** | ✅ **已实测通过** | 两节直播课均 `code=0`，拿到 `lessonToken`；无暗号、无扫码 |
-| 进班 `joinIfNotIn` | ✅ 已实测 | 同一请求即完成"不在班则进班"，无需另调进班接口 |
-| 长期可用性 | ⚠️ 依赖平台 | 平台改协议、加风控、小程序审核都会让某一环失效 |
-| **Android 版编译** | ✅ 已实测 | `assembleDebug` 通过，aapt2 校验包名/权限/minSdk 正确，apksigner 验签通过 |
-| **Android 版运行时** | ❌ 未验证 | 无真机/模拟器，UI 与微信扫码识别均未跑过 |
-| **微信 qrconnect 登录链路** | ✅ 已实测 | 拿到 appId `wx4d919285d23d91b3`、uuid 提取成功、轮询返回 `wx_errcode=408` |
-
-**一句话**：**登录、课程列表、开课检测三项实测可用；进班与签到实测不通过。**
-本项目最初想做的"免扫码秒进班"在长江雨课堂上没有成立，详见上面「『免扫码』：实测不成立」。
-仍可用的是**观察模式**——它能准确告诉你哪节课正在上，剩下的交给你自己在官方端完成。
-
-## 已知限制
-
-- **进班 ≠ 签到**：老师开了签到码，`inviteCode` 还是必须的。
-- **`on_lessons` 字段名不固定**：`live --raw` 或 GUI 悬停单元格可看原始 JSON。
-- **轮询别拉满**：`/api/v3/*` 走统一网关，默认 5s 足够。
-- **二维码 60s 过期**：登录框自动换码，正在扫的码可能失效。
-- **切换后端后需重新登录**：cookie 是绑域名的。
-
-## 文件
-
-| 文件 | 说明 |
-|---|---|
-| `dist/YuketangClient.exe` | **打包好的桌面客户端**（54 MB，单文件免安装） |
-| `dist/YuketangStudy-0.1.0-debug.apk` | **Android 版**（60 KB，debug 签名） |
-| `android/` | Android 工程源码（纯 Java，零依赖） |
-| `app_gui.py` | PySide6 图形界面 |
-| `ykt.py` | 协议后端 + CLI（GUI 直接 import 它） |
-| `build.py` | PyInstaller 打包脚本 |
-| `requirements.txt` | 依赖清单 |
-| `preview.png` / `preview_login.png` | 界面截图 |
-| `GONGXIAOHU-ANALYSIS.md` | 第三方 App「工小湖」的机制分析与隐私提示 |
-| `session.json` | 登录后生成，含 `sessionid`，**已 gitignore** |
-| `config.json` | 记住你选的后端域名 |
-
-### session.json 存在哪
-
-- **源码运行**（`python ykt.py ...`）：项目根目录
-- **打包后的 exe**：**exe 所在的目录**（也就是 `dist\`）
-
-早期版本用的是 `Path(__file__).parent`，在 PyInstaller 单文件模式下会指向临时解包目录
-`%TEMP%\_MEIxxxx`，程序退出即删——既导致登录态不持久，也让 CLI 读不到 GUI 的会话。
-现已改为冻结时取 `sys.executable` 的目录。
-
-**这也是为什么 CLI 和 GUI 要放在同一目录才共享会话**：`dist\` 下的 exe 和根目录下的
-`python ykt.py` 读的是两个不同的 `session.json`。想共用就把会话文件复制到对应位置。
-
-## 与那篇文章的差异
-
-| 文章说法 | 实际 |
-|---|---|
-| `/custom/auth/v1/auth/status` 30 秒阻塞长轮询 | 该路径不存在（三个域全 404/兜底）。登录走 WebSocket |
-| `get_user_course_list` 查课表 | 真实接口是 `/v2/api/web/courses/list?identity=2` |
-| 过滤 `status == 1` 判断开课 | 真实接口是 `on_lesson_courses` 返回 `on_lessons` 数组 |
-| 扫码进班链接是临时签名链接 | 前半句对；"签名只约束旁听生、在册学生不需要"这句**实测未获证实**——去掉 `sign` 后该接口对在册学生同样返回 `errorCode=-1` |
+「雨课堂」「长江雨课堂」「学堂在线」及相关标识归北京慕华信息科技有限公司所有。
