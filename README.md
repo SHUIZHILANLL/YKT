@@ -305,6 +305,32 @@ POST /api/v3/lesson/checkin            {lesson_id}
 python ykt.py checkin-probe 1799823789292069248 --classroom-id 1234567
 ```
 
+### 课中接口 403 与 `set-auth`
+
+`lesson-summary/*` 这组接口要的不是 cookie。PC 端 bundle 里的 axios 默认头揭示了原因：
+
+```js
+if (response.headers && response.headers["set-auth"])
+    window.Authorization = response.headers["set-auth"];   // 服务端下意识下发
+
+axios.defaults.headers["X-Client"]      = "web";
+axios.defaults.headers.Authorization    = "Bearer " + window.Authorization;
+axios.defaults.headers["X-UID"]         = window.userid;
+axios.defaults.headers["classroom-id"]  = classroomId;
+```
+
+所以客户端现在会捕获每个响应头里的 `set-auth`，并自动附带这三个头。
+
+**但 `set-auth` 不是进班接口给的**——实测 `/api/v3/lesson-summary/student/{id}` 的响应里没有。
+哪个接口给，用这条命令逐个查（会打印每个接口的 HTTP 状态、`set-auth` 长度、以及其它
+名字里带 auth/token/session 的响应头）：
+
+```bash
+python ykt.py auth-probe 1799823789292069248 --classroom-id 1234567
+```
+
+输出里 `set-auth` 长度大于 0 的那一行，就是 token 的来源。
+
 输出形如：
 
 ```
