@@ -305,7 +305,22 @@ if ((n = await get(e)).code === 0) {
 
 ## 签到：必须带 5 位课堂暗号
 
-「无码签到」不存在。PC 端 `joinClass` 里的真实逻辑（bundle `@5201763`）：
+> **实测终局（2026-10-20，真实课堂进行中）**：不带暗号的 5 种组合
+> —— `notkn/checkin` 的 `{source:14}`、`{source,lesson_id}`、不带 `Classroom-Id`，
+> 以及 `lesson/checkin` 的两种 —— **全部返回 `50002 LESSON_UNAUTHORIZED`**。
+>
+> 这说明两件事：
+> 1. **无码签到不存在**；缺暗号时链止于鉴权，连业务判断都到不了
+> 2. `LESSON_UNAUTHORIZED` 指"缺课堂上下文"，而课堂上下文恰恰是**签到成功后**才下发的
+>    （bundle 里签到成功 → `handleJump(data, 2)` → `/lesson/fullscreen/v3/{lessonId}`）
+>
+> 这是个闭环：**要进课堂得先签上，要签上得先有课堂上下文。** 唯一的突破口是老师给的
+> 5 位暗号（或扫大屏二维码拿到 `sign`）——也正是本项目想避开的那个动作。
+>
+> 另注：`/api/v3/lesson-summary/student` **不是进班接口**，它在 `learning_summary`
+> （学习小结）组里，是课后报告接口，课进行中返回 `errorCode:-1` 属正常。
+
+PC 端 `joinClass` 里的真实逻辑（bundle `@5201763`）：
 
 ```js
 if (5 !== code.length) return 走 join_classroom;   // 不是 5 位 → 那是班级邀请码，不是签到

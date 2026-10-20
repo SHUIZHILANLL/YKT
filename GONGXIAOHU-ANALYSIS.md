@@ -170,8 +170,49 @@ App 引导页写的是：
 | 动态码签到 | 不支持，提示用户自理 | 支持（用户输入暗号） |
 | 账号凭据外发 | 有 | 无 |
 
-无码签到这个能力，本项目尚未打通——候选端点是 `/api/v3/lesson/checkin`
-（不带 `notkn`），但未经真实账号验证，此处不写成结论。
+无码签到这个能力，本项目无法复制——原因在下面「技术路线对照」一节。
+
+## 技术路线对照（关键）
+
+把两边的实现摆在一起，就能看清为什么他能跑通、我们跑不通：
+
+| | 工小湖 | 本项目 |
+|---|---|---|
+| 客户端是否调用雨课堂的进班接口 | **否，`lesson-summary/student` 在包内出现 0 次** | 是，直连该接口 |
+| 课堂上下文来源 | 服务端在签到响应里返回 `bearer_token` / `lesson_token` / `presentation_list` | 尝试自己向雨课堂索取 |
+| 逆向位置 | **服务端（不可见）** | 客户端（可见） |
+| 结果 | 可用 | `50002 LESSON_UNAUTHORIZED` |
+
+他的 `classroom.vue` 里进入课堂只有一个动作：
+
+```js
+const o = await ke(a.user_id, l.value, c.value);   // ke = 调他自己的服务器
+if (0 === o.code && o.data) {
+  T.value = s.bearer_token;            // 课堂 bearer
+  // lesson_token / presentation_list / active_presentation_id
+}
+```
+
+`ke()` 即 `/api/ykt/lesson/check-in`。**客户端从不向雨课堂索取课堂权限**，
+全部由那台服务器代劳。
+
+所以：**他的"实测可行"证明的是「那台服务器做得到」，不是「存在一条可复制的客户端路径」。**
+本次对照最重要的结论是——**他客户端里没有可抄的进班实现。**
+
+## 本项目侧的终局结论
+
+真实课堂进行中实测：
+
+- 进班候选 9 种变体（含 `&source=14`、`&sign=&ts=`、`&classroom_id`）→ 全部 `data.errorCode=-1`，
+  且该接口本身是**课后学习报告**，不是进班入口
+- 不计暗号的签到候选 5 种变体（`notkn/checkin` 与 `lesson/checkin`，带/不带 `Classroom-Id`）
+  → 全部 `50002 LESSON_UNAUTHORIZED`
+
+`LESSON_UNAUTHORIZED` 指缺课堂上下文，而课堂上下文是**签到成功后**才下发的。
+于是形成闭环：**要进课堂得先签上，要签上得先有课堂上下文。**
+
+唯一突破口是老师给的 5 位暗号，或扫大屏二维码取得 `sign`——正是本项目想避开的动作。
+
 
 ## 如何自行复核
 
