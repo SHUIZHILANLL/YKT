@@ -387,6 +387,18 @@ GUI 和 Android 里点「签到」会自动跑这条链；失败时日志里同�
 | `session.json` | 登录后生成，含 `sessionid`，**已 gitignore** |
 | `config.json` | 记住你选的后端域名 |
 
+### session.json 存在哪
+
+- **源码运行**（`python ykt.py ...`）：项目根目录
+- **打包后的 exe**：**exe 所在的目录**（也就是 `dist\`）
+
+早期版本用的是 `Path(__file__).parent`，在 PyInstaller 单文件模式下会指向临时解包目录
+`%TEMP%\_MEIxxxx`，程序退出即删——既导致登录态不持久，也让 CLI 读不到 GUI 的会话。
+现已改为冻结时取 `sys.executable` 的目录。
+
+**这也是为什么 CLI 和 GUI 要放在同一目录才共享会话**：`dist\` 下的 exe 和根目录下的
+`python ykt.py` 读的是两个不同的 `session.json`。想共用就把会话文件复制到对应位置。
+
 ## 与那篇文章的差异
 
 | 文章说法 | 实际 |
