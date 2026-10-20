@@ -1,0 +1,48 @@
+v0.4.0：拿 sid 不再需要模拟器和抓包，桌面与 Android 都能自己换
+
+一、核心改动：sid 可以「手机号 + 短信码」直接换
+
+抓包记录里 App 登录带 ticket/rand，一度以为登录也要图形验证码。实测两个
+接口门禁不同：
+
+  POST /api/v3/user/login/app  {code:"000000", ticket:"", rand:""} -> 50046 验证码错误
+  POST /api/v3/user/code/send  {ticket:"", rand:""}                -> 50046 验证码错误
+
+登录接口抱怨的是短信码，不校验 ticket；发码接口空 ticket 直接拒。
+所以分工：短信由用户在官方 App 端点发（图形码由官方前端解决），登录与
+sid 提取全自动。
+
+于是「拿 sid」从「root 模拟器 + 自签 CA + bind mount 系统证书 + iptables
+透明重定向 + 自写 TLS 终结代理」降为两条命令 / 两次点击。
+
+二、桌面端
+- 新增 ykt.app_login(phone, code)：调 /api/v3/user/login/app，从 Set-Cookie
+  取 sid / sessionid / csrftoken；若登录响应没给 sid，会顺 App 启动序列多
+  请求几次再收一次
+- 新增 CLI：python ykt.py app-login --phone <号>（--send 会说明发码被拦）
+- GUI 新增「App 凭证」对话框：上半部分手机号+短信码登录，下半部分直接粘 sid
+- 抓包方式保留为最后手段，文档移到「方式三」
+
+三、Android v0.4.0
+- 新增「App 登录」按钮 + 对话框（手机号 / 短信码）
+- Api.appLogin()：POST login/app，harvestCookies() 解析 Set-Cookie，
+  含同样的后续请求兜底；AppLoginResult 返回 sid/sessionId/name/msg
+- Store.deviceId()：首次生成 19 位十六进制 pushDeviceId 并固定复用
+- 成功后自动填入 sid 输入框并持久化
+
+四、更正一处事实错误
+
+此前文档写「sid 一次拿到可以长期用」——错的。完整观察到生命周期：
+
+  15:17 登录拿到 sid → 17:09 仍可签 → 17:25 失效（50000）
+
+约 2 小时。已更正 README 与 docs/FINDINGS.md，并把失效提示从
+「重新抓包导入」改成「用 app-login 重新获取」。
+
+五、文档
+- README 重写「如何拿到 sid」：三种方式按难度排序，抓包降到方式三
+- 常见问题补两条：为什么还要自己发短信、sid 与 sessionid 的区别
+- docs/FINDINGS.md 新增 2.6（门禁差异）与 2.7（sid 存活时间实测）
+- SECURITY.md 补充 sid 的获取方式
+
+产物：dist/YuketangClient.exe、dist/YuketangStudy-0.4.0-debug.apk

@@ -53,6 +53,7 @@ cookie "sessionid=X; sid=Y"   -> code 0
 | 项目 | 实际情况 |
 |---|---|
 | 凭据有哪些 | ① `sessionid`（Web 扫码登录）② `sid` + `csrftoken`（官方 App 登录） |
+| 怎么拿到 `sid` | 客户端内「App 凭证 / App 登录」：手机号 + 短信验证码直接调 `login/app`，**不需要 root、不需要装证书、不需要抓包** |
 | 存在哪里 | `session.json`（明文 JSON），**源码运行时在仓库根目录，打包后 exe 读取 exe 同目录** |
 | **是否加密** | **否。明文。** |
 | 是否上传 | 否。无任何上传逻辑、无远端服务器、无遥测 |

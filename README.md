@@ -73,10 +73,12 @@ python ykt.py watch --observe       # 【推荐】只检测开课，不动手
 
 ### 方式三：Android
 
-`dist/YuketangStudy-0.3.0-debug.apk`（debug 签名，直接安装）。
+`dist/YuketangStudy-0.4.0-debug.apk`（debug 签名，直接安装）。
 
 **这不是桌面版打包过来的**——PySide6 没有 Android 目标，是独立重写的一份：
 纯 Java + 原生 Views + `HttpURLConnection`，零第三方依赖。详见 [android/README.md](android/README.md)。
+
+主界面功能：sid 输入框 · **App 登录换 sid** · 签到码 · 自动进班 · 自动签到 · 运行日志。
 
 ```bash
 cd android
@@ -129,9 +131,48 @@ cookie: sessionid=<任意有效会话>; sid=<App 的 sid>
 
 ## 如何拿到 sid
 
-`sid` 在官方 App 的请求 Cookie 里。抓一次包即可，**一次拿到可以长期用**（App 退出登录后失效）。
+`sid` 只能来自**官方 App 的登录**，Web 扫码拿不到。三种方式，从简单到复杂：
 
-本仓库验证过的做法（Flutter 不读系统代理，CONNECT 代理抓不到，必须透明重定向）：
+### 方式一：在客户端里登录（推荐，最简单）
+
+**Windows**：点右上角 **「App 凭证」** → 填手机号 + 短信验证码 → 点「登录并获取 sid」
+
+**Android**：主界面点 **「App 登录（手机号 + 短信码）换 sid」** → 填手机号 + 验证码
+
+**命令行**：
+
+```bash
+python ykt.py app-login --phone 13800000000
+# 提示输入 6 位短信验证码
+```
+
+短信要**你自己发**：打开官方 App 登录页 → 输手机号 → 点「获取验证码」。
+
+> 为什么不能代发：`POST /api/v3/user/code/send` 要图形验证码 `ticket`，
+> 但 `POST /api/v3/user/login/app` **不要**——所以图形码交给你在官方 App 里点，
+> 剩下的登录与 sid 提取全自动。
+
+> **注意：`sid` 是会话凭证，会过期。** 本次实测约 **2 小时**后失效
+> （15:17 登录 → 17:25 失效），不是一次性配置就能永久用的东西。
+> 好在过期后重走一遍「方式一」只要几十秒。
+
+拿到后自动写入 `session.json`（桌面端会同时写根目录与 `dist/`）。
+
+### 方式二：直接粘贴 sid
+
+已经有 sid（比如从别处抓到的）就跳过登录：
+
+```bash
+python ykt.py app-import --sid <那串值>
+```
+
+GUI 里「App 凭证」对话框下半部分也能直接粘；Android 上就是主界面的输入框。
+
+### 方式三：抓包（最后手段）
+
+客户端登录路走不通时，可以自己抓官方 App 的流量取 `sid=`。
+
+Flutter 不读系统代理，CONNECT 代理抓不到，必须透明重定向：
 
 1. 模拟器 `adb root`
 2. `openssl` 自签 CA + 目标域名证书
@@ -141,24 +182,21 @@ cookie: sessionid=<任意有效会话>; sid=<App 的 sid>
 6. 本机跑只转发该域名的 TLS 终结代理
 7. 在 App 里点几下，从日志的 `cookie:` 行取 `sid=`
 
-详细步骤与踩坑见 [docs/FINDINGS.md](docs/FINDINGS.md) 第二节。
-
-拿到后导入：
-
-```bash
-python ykt.py app-import --sid <那串值>
-python ykt.py app-import --from-capture path/to/capture.log
-```
-
-导入会**同时写两个位置**：仓库根目录（源码运行读它）和 `dist/`（exe 读它）。
+拿到后 `python ykt.py app-import --from-capture path/to/capture.log`。
+完整步骤与踩坑见 [docs/FINDINGS.md](docs/FINDINGS.md) 第二节。
 
 ### sid 失效了
 
 ```
 [!] App 的 sid 已失效（登录态过期）
+    最快的恢复方式（手机号 + 短信码，不用抓包）：
+        python ykt.py app-login --phone <你的手机号>
 ```
 
-在官方 App 里重新登录一次，再 `app-import` 一次即可。不需要重新搭抓包环境。
+GUI 点「App 凭证」，Android 点「App 登录」，效果相同。**不需要重新搭抓包环境。**
+
+如果你习惯把 `sid` 存在别处备份，也可以直接 `app-import --sid <值>` 粘回去——
+但过期了粘回去也没用，只能重新登录。
 
 ---
 
@@ -203,6 +241,14 @@ GONGXIAOHU-ANALYSIS.md 第三方 App「工小湖」的机制与隐私提示
 
 **Q：老师开了大屏动态码，还能签吗？**
 能。`sid` 这条路径不依赖二维码里的 `sign`。
+
+**Q：为什么 `app-login` 还需要我自己发短信？**
+发码接口 `POST /api/v3/user/code/send` 要图形验证码 `ticket`，脚本代过不了；
+但登录接口 `POST /api/v3/user/login/app` **不要**。所以图形码交给官方 App，其余全自动。
+
+**Q：`sid` 和 `sessionid` 有什么区别？**
+`sessionid` 是网页端登录态，只能读课程、看开课；`sid` 是 App 侧凭证，
+`/api/v3/lesson/*`（签到、课件、弹幕）只认它。两者不绑定，`sid` 配任意有效 `sessionid` 都能用。
 
 **Q：会被发现吗？**
 教师端能看到签到时间戳与来源。自动化签到的时间分布与人手不同，**不是不可发现的**。
