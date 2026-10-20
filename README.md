@@ -4,7 +4,12 @@
 
 协议事实来自 PC 端 web bundle 的静态提取 + 端点实测，不依赖任何私有资料。
 
-**核心结论：雨课堂没有 `join` 接口。进班不是一次请求，而是「凭 session 直连课堂接口」。二维码里的 `sign` 只约束非名单人员（旁听生），对在册学生是冗余参数。**
+**核心结论（已按实测修正）：雨课堂没有 `join` 接口，进班不是一次请求。但「凭 `sessionid` 直连
+`lesson-summary/student` 即可进班」这个推论——也是本项目最初的立项目标——在长江雨课堂上
+**实测不成立**：真实课堂进行中，该接口对在册学生同样返回 `data.errorCode=-1`。**
+
+目前**确实可用**的是：扫码/Cookie 登录、课程与课次列表、**正在上课检测**。
+进班与签到不可用。详细证据与推翻过程见「『免扫码』：实测不成立」一节。
 
 ---
 
@@ -155,7 +160,7 @@ python build.py --onefile  # 单文件版，分发方便
 | `/api/v3/classroom/on-lesson-upcoming-exam` | GET | 否 | **正在上课的真实数据源**，读 `data.onLessonClassrooms` |
 | `/v/course_meta/on_lesson_courses` | GET | **是** | 兜底。无论登录与否都返回 `{"success":true,"data":{"on_lessons":[]}}`，实际是空的 |
 | `/api/v3/classroom/on-lesson` | GET | 否 | 兜底 |
-| `/api/v3/lesson-summary/student?lesson_id=X` | GET | 否 | **进班本体**：拿到即已进班 |
+| `/api/v3/lesson-summary/student?lesson_id=X` | GET | 否 | 进班尝试入口。**实测对在册学生也返回 `data.errorCode=-1`，进班不成立** |
 | `/api/v3/lesson-summary/student/presentation?presentation_id=&lesson_id=` | GET | 否 | 课件 |
 | `/api/v3/lesson/notkn/checkin` | POST | 否 | 签到 `{source, inviteCode}` |
 | `/api/lesson/web_check_in` | POST | 否 | 旧签到，需 CSRF |
@@ -224,22 +229,55 @@ python ykt.py login --host 长江雨课堂
 
 可选：`长江雨课堂` / `长江雨课堂(ykt.io)` / `雨课堂专业版` / `雨课堂`。
 
-## 为什么"免扫码"成立
+## 「免扫码」：实测不成立（原来的说法已推翻）
 
-投屏二维码的本质是**前端路由页**，不是 API：
+> **这一节原来写的是"免扫码成立"。实测之后必须更正：在长江雨课堂上不成立。**
+
+过去这里的论证是：`sign` 只约束名单外的旁听生，在册学生凭 `sessionid` 就已经有该
+`lesson_id` 的访问权，所以 `GET /api/v3/lesson-summary/student?lesson_id=X` 返回
+`success:true` 就等于进班了。
+
+**这套推理没有经过验证，实测把它推翻了。**
+
+2026-10-20 在**真实课堂进行中**（`live --raw` 同时返回两节开课）测试 8 个变体：
 
 ```
-https://changjiang.ykt.io/v2/web/join_lesson?lesson_id=123&sign=ab8f&ts=1729158000
+GET  仅 Referer                  HTTP 200  code=0  data.errorCode=-1
+GET  + Classroom-Id              HTTP 200  code=0  data.errorCode=-1
+GET  + Accept: application/json  HTTP 200  code=0  data.errorCode=-1
+GET  &source=14                  HTTP 200  code=0  data.errorCode=-1
+GET  &source=14（无 Classroom-Id）HTTP 200  code=0  data.errorCode=-1
+GET  &sign=&ts=                  HTTP 200  code=0  data.errorCode=-1
+POST {source:14}                 HTTP 403   （Envoy 拦，该接口只收 GET）
+POST {source:14,lesson_id}       HTTP 403
 ```
 
-打开后前端拿 `sign + ts` 去换旁听资格。`sign` 校验的对象是不在班级名单里的人。在册学生凭 `sessionid` 已具备该 `lesson_id` 的访问权，所以进班 = `GET /api/v3/lesson-summary/student?lesson_id=X`，返回 `success:true` 就已经进班了。
+**全部 `errorCode: -1`。**
 
-验证方法：把二维码链接的 `sign`、`ts` 删掉只留 `lesson_id`，用在册账号请求上面那个接口，返回 200 即成立。
+这里有个必须知道的坑：**该接口拒绝时顶层 `code` 仍然是 `0`**，真实结论在
+`data.errorCode`。只看顶层 `code` 会把失败当成功——本项目早期就因此误报过
+「已进班 / 课件0份」。
+
+```json
+{"code": 0, "data": {"errorCode": -1}}
+```
+
+因此：
+
+- **进班这条路径目前不通**，本项目的"秒进班"能力不成立
+- 依赖进班上下文的签到自然也拿不到（`/api/v3/lesson/checkin` 返回
+  `50002 LESSON_UNAUTHORIZED`）
+- 「在册学生不需要 `sign`」这句话，至少在这个部署上没有得到证实
+
+仍待确认：`errorCode -1` 究竟表示"缺少签名""不是正确入口"还是"该部署关闭了此接口"。
+在没有真实 `sign` 的情况下无法进一步区分——而拿到 `sign` 就意味着扫了老师的码，
+本项目的立项目标（不扫码）也就没有意义了。
 
 ## 三个边界
 
-1. **进班 ≠ 签到。** 老师开了签到码，`inviteCode` 还是必须的。GUI 的「自动签到」只在无码签到下有效。
-2. **`on_lessons` 字段名不固定。** `ykt.norm_lesson()` 兜了 `lesson_id/courseware_id/id`、`classroom_id/cid` 多套命名。`live` 输出空但网页确实在上课时，把 `raw` 打出来对字段。
+1. **进班 ≠ 签到。** 老师开了签到码，`inviteCode` 还是必须的。
+2. **开课检测字段名不固定。** `ykt.norm_lesson()` 兜了 `lesson_id/courseware_id/id`、
+   `classroom_id/cid` 多套命名。`live` 输出空但网页确实在上课时，把 `raw` 打出来对字段。
 3. **别把轮询拉满。** `/api/v3/*` 走统一网关，高频会撞限流。默认 5s 足够。
 
 ## 开课检测：一条踩过的坑
@@ -352,16 +390,20 @@ GUI 和 Android 里点「签到」会自动跑这条链；失败时日志里同�
 | 开课感知 `on_lesson_courses` | ✅ 已实测 | 免鉴权直接返 `{"success":true,"data":{"on_lessons":[]}}` |
 | 登录 WebSocket | ✅ 已实测 | ws 握手成功、二维码正常下发、`expire_seconds:60` 可见 |
 | **扫码到 sessionid 的完整闭环** | ⚠️ 未端到端 | 缺一个真实微信账号跑完；`UserID/Auth` 在 `subscribe_status` 帧里（已按此实现），若字段名不同，登录框底部 ws 日志会直接显示 |
-| **进班 `lesson-summary/student`** | ⚠️ 未端到端 | 接口真实存在（实测需登录），但"返回 success 即已进班"是基于协议的推断，没在真实课堂上验证过 |
-| 免扫码的**原理** | ✅ 成立 | `sign` 只约束名单外旁听生；在册学生凭 sessionid 已具备该 lesson 的访问权 |
-| `on_lessons` 字段名 | ⚠️ 未知 | `norm_lesson()` 兜了 4 套命名；仍对不上就用 GUI 悬停 tooltip 或 `live --raw` 看原始 JSON |
-| 签到 | ⚠️ 三种方式兜底 | 原生客户端只发 `{source, inviteCode}`；有签到码时 `inviteCode` 必须对 |
+| **进班 `lesson-summary/student`** | ❌ **实测不通过** | 真实课堂进行中测 8 个变体（含 `&source=14`、`&sign=&ts=`），全部 `code=0` 但 `data.errorCode=-1`。该接口拒绝时顶层 code 仍为 0，靠 is_ok 判断会误报成功 |
+| 免扫码的**原理** | ❌ **已推翻** | 原论证"在册学生凭 sessionid 即可进班"未获证实；实测该接口对在册学生同样拒绝 |
+| `on_lessons` 字段名 | ✅ 已实测 | `live --raw` 实测字段为 `classroomId/classroomName/courseId/courseName/lessonId/role/openTeacher`，`role=5` 为学生 |
+| `/api/v3/lesson/checkin` body | ✅ 已实测 | body 必须含 `source`；只给 `lesson_id` 返回 50400；`{source:14}` 返回 50002 LESSON_UNAUTHORIZED（因进班未成功，缺课堂上下文） |
+| `/api/v3/lesson-summary/checkin` | ❌ 路由不可用 | Envoy 直接拒：无 Content-Type、只有 `x-envoy-*` 头、403/500 随形状跳变 |
+| 签到 | ❌ 阻塞在进班 | 参数层已确认，但拿不到课堂上下文 |
 | 长期可用性 | ⚠️ 依赖平台 | 平台改协议、加风控、小程序审核都会让某一环失效 |
 | **Android 版编译** | ✅ 已实测 | `assembleDebug` 通过，aapt2 校验包名/权限/minSdk 正确，apksigner 验签通过 |
 | **Android 版运行时** | ❌ 未验证 | 无真机/模拟器，UI 与微信扫码识别均未跑过 |
 | **微信 qrconnect 登录链路** | ✅ 已实测 | 拿到 appId `wx4d919285d23d91b3`、uuid 提取成功、轮询返回 `wx_errcode=408` |
 
-**一句话**：抓包层面的协议是对的，登录和进班这两步的真实闭环需要你用自己账号跑一次，跑不通时 GUI 里能直接看到卡在哪一帧。
+**一句话**：**登录、课程列表、开课检测三项实测可用；进班与签到实测不通过。**
+本项目最初想做的"免扫码秒进班"在长江雨课堂上没有成立，详见上面「『免扫码』：实测不成立」。
+仍可用的是**观察模式**——它能准确告诉你哪节课正在上，剩下的交给你自己在官方端完成。
 
 ## 已知限制
 
@@ -406,4 +448,4 @@ GUI 和 Android 里点「签到」会自动跑这条链；失败时日志里同�
 | `/custom/auth/v1/auth/status` 30 秒阻塞长轮询 | 该路径不存在（三个域全 404/兜底）。登录走 WebSocket |
 | `get_user_course_list` 查课表 | 真实接口是 `/v2/api/web/courses/list?identity=2` |
 | 过滤 `status == 1` 判断开课 | 真实接口是 `on_lesson_courses` 返回 `on_lessons` 数组 |
-| 扫码进班链接是临时签名链接 | 对，但签名只约束旁听生，不约束在册学生 |
+| 扫码进班链接是临时签名链接 | 前半句对；"签名只约束旁听生、在册学生不需要"这句**实测未获证实**——去掉 `sign` 后该接口对在册学生同样返回 `errorCode=-1` |
