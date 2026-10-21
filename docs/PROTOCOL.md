@@ -139,17 +139,31 @@ x-client: app
 
 **`sid` 不在这份 JSON 里，而在响应的 `Set-Cookie` 中。**
 
-### 5.1 图形验证码的门禁差异（重要）
+### 5.1 图形验证码的门禁差异（此结论已作废）
+
+初版这里写的是：
+
+> 登录接口不校验 `ticket`：它抱怨的是短信码；发码接口校验 `ticket`。
+
+**这个结论推不出来，现予更正。** 2026-10-21 两名使用者按这个思路尝试，
+连续多次全部 `50046`。随后做组合探测：
 
 ```
-POST /api/v3/user/login/app   {code:"000000", ticket:"", rand:""}  -> 50046 验证码错误
-POST /api/v3/user/code/send   {ticket:"", rand:""}                 -> 50046 验证码错误
+空 ticket + 假码       -> 50046
+假 ticket + 假码       -> 50046
+空 ticket + 空码       -> 50046
+空 ticket + 超长码     -> 50046
+不存在的手机号 + 假码  -> 50046
 ```
 
-- **登录接口不校验 `ticket`**：它抱怨的是短信码
-- **发码接口校验 `ticket`**：空值直接拒
+**所有情况返回完全一样**——`50046` 是个通用拒绝，无法据它区分「短信码错」
+与「缺图形码」。而抓包记录里官方 App 的登录请求**确实带着 `ticket` / `rand`**，
+且与发码请求用的是同一组值。
 
-所以可以合法地做到「短信由官方前端发（图形码由它解决）+ 登录与取 `sid` 脚本化」。
+因此更可能的事实是：**图形验证码是必需的，且短信码与那组 `ticket` 绑定。**
+
+结论：**本仓库不提供「手机号 + 短信码自动换 sid」的可行实现。**
+`sid` 只能用抓包方式获取（第 10 节）。
 
 ### 5.2 短信发码（需要图形码）
 
@@ -271,12 +285,16 @@ r = { invite_code: code, source: 14 };             // 否则 → 旧接口
 | 0 | OK | 成功（**但 lesson-summary 族要看 `data.errorCode`**） |
 | 50000 | UNAUTHENTICATED | 缺 `sid`（或 `sid` 过期） |
 | 50002 | LESSON_UNAUTHORIZED | 缺课堂上下文——通常是没签到成功就调了需要上下文的接口 |
+| 50016 | CLASSROOM_NOT_FOUND | 班级 id 不存在 |
+| **50080** | **LESSON_DELETED** | **这节课在服务端已不存在**（`/v/lesson/lesson_group_info` 会说 `NewLesson matching query does not exist`）。老师删除或已清理，重试无用，应刷新开课列表 |
 | 50400 | BAD_REQUEST | 参数形状不对（`lessonId` 传了数字、带了 `Authorization`） |
-| 50046 | 验证码错误 | 短信码错/过期，或发码缺图形码 `ticket` |
-| 50011 | — | 手机号未注册 |
+| 50046 | 验证码错误 | **通用拒绝**。它对假码、空码、空/假 `ticket`、未注册手机号返回的都是这一条，不能用它判断究竟缺什么 |
 
 **最阴的一条**：`lesson-summary` 族拒绝时顶层 `code` 仍是 `0`，真实结论在 `data.errorCode`。
 只看顶层 `code` 会把失败当成功。
+
+**第二阴的一条**：`50046` 是无差别拒绝。本仓库曾据它推断「登录不校验图形码 `ticket`」，
+后来证明推不出来——所有非法输入都是同一个 50046。见第 5.1 的更正。
 
 ---
 
@@ -332,8 +350,14 @@ Flutter 的 `dart:io` **不读 Android 系统代理**，普通 CONNECT 代理抓
 如果你要自己写一份，最小可用路径是：
 
 1. `GET /v/course_meta/user_info` + `POST /pc/web_login` 拿到 `sessionid`
-2. 用手机号 + 短信码调 `POST /api/v3/user/login/app`，从 `Set-Cookie` 取 `sid`
+2. **抓一次官方 App 的流量，从请求 Cookie 里取 `sid`**（第 10 节）
 3. `GET /api/v3/classroom/on-lesson-upcoming-exam` 看哪节课在上
 4. `POST /api/v3/lesson/checkin` `{source:23, lessonId:"<串>", joinIfNotIn:true}`
 
 四步之外都是锦上添花。注意第 6 节的三个坑，否则会反复收到 `50400` / `50000`。
+
+三条容易白费力气的事，先说清楚：
+
+- **不要试图用手机号+短信码换 `sid`**。第 5.1 节已证明这条路在图形码前失败
+- **不要拿 `lesson-summary` 族当进班接口**，那是课后报告
+- **`LESSON_DELETED` 不要重试**，课已经没了，重试只会一直 50080
