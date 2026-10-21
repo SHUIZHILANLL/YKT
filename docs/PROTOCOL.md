@@ -332,6 +332,14 @@ Flutter 的 `dart:io` **不读 Android 系统代理**，普通 CONNECT 代理抓
 6. 本机跑一个只转发该域名的 TLS 终结代理
 7. 在 App 里操作几下，从日志的 `cookie:` 行取 `sid=`
 
+这七步全部可以脚本化，实测可行。要点：
+
+- 自签证书的 `subjectAltName` 必须覆盖目标域名
+- Android 侧证书文件名是 `openssl x509 -subject_hash_old` 的结果 + `.0`，权限 644
+- 每次抓完记得还原：`iptables -t nat -F OUTPUT`、`umount`、`adb reverse --remove-all`
+- 代理只需要"监听到 `Cookie:` 里的 `sid=` 即可停"，不必解析响应体
+- 抓到的 `sid` 可能仍是旧的（App 里若没重新登录），务必用一次真实调用验证
+
 清理：`iptables -t nat -F OUTPUT`、`umount`、`adb reverse --remove-all`。
 
 ---

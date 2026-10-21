@@ -6,6 +6,8 @@ app_gui.py
 build.py
 requirements.txt
 一键签到.bat
+sidgrab.py
+tools/grab_sid.py
 android/
 dist/
 YuketangClient.spec
